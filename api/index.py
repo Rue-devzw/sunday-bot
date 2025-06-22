@@ -16,7 +16,7 @@ WHATSAPP_TOKEN = os.environ.get('WHATSAPP_TOKEN')
 PHONE_NUMBER_ID = os.environ.get('PHONE_NUMBER_ID')
 
 # Static Configuration
-ANCHOR_DATE = date(2024, 9, 1) 
+ANCHOR_DATE = date(2024, 8, 21) 
 LESSONS_FILE = 'search_lessons.json'
 USERS_FILE = 'users.json'
 CLASSES = {
