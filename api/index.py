@@ -1,33 +1,26 @@
-# app.py
+# api/index.py
 
 import os
 import json
 import requests
-from flask import Flask, request, jsonify
+from flask import Flask, request
 from datetime import date
 from dateutil.relativedelta import relativedelta, MO
 
 # --- 1. INITIALIZE FLASK APP ---
+# Vercel will look for this 'app' variable.
 app = Flask(__name__)
 
 # --- 2. CONFIGURATION & ENVIRONMENT VARIABLES ---
-# Load credentials from environment variables for security
 VERIFY_TOKEN = os.environ.get('VERIFY_TOKEN', 'your_default_verify_token')
 WHATSAPP_TOKEN = os.environ.get('WHATSAPP_TOKEN')
 PHONE_NUMBER_ID = os.environ.get('PHONE_NUMBER_ID')
 
-# Static Configuration
-ANCHOR_DATE = date(2024, 8, 21) 
-LESSONS_FILE = 'search_lessons.json'
-USERS_FILE = 'users.json'
-CLASSES = {
-    "1": "Beginners (Ages 2-5)",
-    "2": "Primary Pals (1st - 3rd Grade)",
-    "3": "Answer (4th - 8th Grade)",
-    "4": "Search (High School - Adults)"
-}
+# ... (all your other configuration and helper functions are here and stay the same) ...
+# ... (load_data, save_data, get_current_lesson_index, format_search_lesson) ...
+# ... (send_whatsapp_message, handle_bot_logic) ...
+# Copy all the functions from the previous app.py here. For brevity, I'll just show the final routes.
 
-# --- 3. HELPER FUNCTIONS (UNCHANGED) ---
 def load_data(file_path):
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -36,40 +29,20 @@ def load_data(file_path):
         return {}
 
 def save_data(data, file_path):
+    # IMPORTANT for Vercel: We can only write to the /tmp directory
+    # We will need to adjust this if we want to save user data permanently.
+    # For now, this approach won't work on Vercel for saving data. We'll proceed
+    # but acknowledge this limitation. A database is the real solution.
+    # A quick fix is to check if we are in the Vercel environment.
+    if 'VERCEL' in os.environ:
+        file_path = f"/tmp/{os.path.basename(file_path)}"
+    
     with open(file_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=4)
 
-def get_current_lesson_index():
-    today = date.today()
-    anchor_week_start = ANCHOR_DATE + relativedelta(weekday=MO(-1))
-    current_week_start = today + relativedelta(weekday=MO(-1))
-    days_difference = (current_week_start - anchor_week_start).days
-    week_difference = days_difference // 7
-    return week_difference if week_difference >= 0 else -1
-
-def format_search_lesson(lesson):
-    if not lesson:
-        return "I'm sorry, I couldn't find the lesson for this week. Please check back later."
-    title = lesson.get('lessonTitle', 'N/A')
-    key_verse = lesson.get('keyVerse', 'N/A')
-    bible_refs = ', '.join([f"{ref['book']} {ref['chapter']}:{ref['verses']}" for ref in lesson.get('bibleReference', [])])
-    message = f"📚 *Lesson: {title}*\n\n"
-    message += f"📖 *Bible Text:* {bible_refs}\n"
-    if lesson.get('supplementalScripture'):
-        message += f"📖 *Supplemental:* {lesson.get('supplementalScripture')}\n\n"
-    message += f"🔑 *Key Verse:*\n_{key_verse}_\n\n"
-    for section in lesson.get('lessonSections', []):
-        section_title = section.get("sectionTitle")
-        section_content = section.get("sectionContent")
-        section_type = section.get("sectionType")
-        if section_type == 'text':
-            message += f"*{section_title}*\n{section_content}\n\n"
-        elif section_type == 'question':
-            message += f"❓ *{section_title}:* {section_content}\n"
-    message += "\n"
-    return message
-
-# --- 4. NEW: FUNCTION TO SEND MESSAGES VIA WHATSAPP API ---
+# ... [PASTE ALL YOUR OTHER HELPER AND LOGIC FUNCTIONS HERE] ...
+# Make sure the `load_data` and `save_data` functions from the previous step are here.
+# I'm omitting them for space, but they are required. The rest of the code is below.
 def send_whatsapp_message(recipient_id, message_text):
     """Sends a message back to the user via the Meta Graph API."""
     url = f"https://graph.facebook.com/v17.0/{PHONE_NUMBER_ID}/messages"
@@ -89,11 +62,9 @@ def send_whatsapp_message(recipient_id, message_text):
     except requests.exceptions.RequestException as e:
         print(f"Error sending message: {e}")
 
-# --- 5. BOT LOGIC FUNCTION (MODIFIED) ---
 def handle_bot_logic(user_id, message_text):
     """
     Processes the user message and triggers the send function.
-    This function no longer returns text, it calls `send_whatsapp_message`.
     """
     users = load_data(USERS_FILE)
     message_text_lower = message_text.lower().strip()
@@ -115,7 +86,9 @@ def handle_bot_logic(user_id, message_text):
         user_class = users[user_id]['class']
         if message_text_lower == 'lesson':
             if "Search" in user_class:
-                lessons_data = load_data(LESSONS_FILE)
+                # Vercel needs absolute paths for data files
+                lessons_path = os.path.join(os.path.dirname(__file__), '..', LESSONS_FILE)
+                lessons_data = load_data(lessons_path)
                 if not lessons_data:
                     response_text = "Error: Could not load lesson data. Please contact an admin."
                 else:
@@ -133,21 +106,18 @@ def handle_bot_logic(user_id, message_text):
         else:
             response_text = "Sorry, I didn't understand that. Type `lesson` or `menu`."
     
-    # Send the determined response back to the user
     send_whatsapp_message(user_id, response_text)
 
-# --- 6. FLASK WEBHOOK ROUTES ---
+# --- FLASK WEBHOOK ROUTES ---
+# Vercel routes all requests to this file, which Flask then handles.
 @app.route('/whatsapp', methods=['GET', 'POST'])
 def whatsapp_webhook():
-    """Main webhook endpoint to receive events from WhatsApp."""
     if request.method == 'GET':
-        # This is the verification challenge from Meta
         if request.args.get('hub.verify_token') == VERIFY_TOKEN:
             return request.args.get('hub.challenge'), 200
         return 'Verification token mismatch', 403
     
     if request.method == 'POST':
-        # This is an incoming message from a user
         data = request.get_json()
         if data and 'entry' in data:
             for entry in data['entry']:
@@ -160,11 +130,6 @@ def whatsapp_webhook():
                             handle_bot_logic(user_id, message_text)
         return 'OK', 200
 
-# Health check route
 @app.route('/')
 def health_check():
-    return "SundayBot is running!", 200
-
-# This part is optional but good for local testing of the web server
-if __name__ == '__main__':
-    app.run(debug=True, port=os.environ.get('PORT', 5001))
+    return "SundayBot is running on Vercel!", 200
