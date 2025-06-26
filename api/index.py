@@ -101,7 +101,7 @@ def handle_bot_logic(user_id, message_text):
     message_text_lower = message_text.lower().strip()
     response_text = ""
 
-    # ---FIXED: STATE MANAGEMENT FOR 'switch' COMMAND---
+    # ---FIXED: STATE MANAGEMENT FOR 'switch' COMMAND----
     # We handle the 'switch' command here to reset the user's state.
     if message_text_lower == "switch":
         if user_id in users and 'class' in users[user_id]:
