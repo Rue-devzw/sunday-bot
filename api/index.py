@@ -17,9 +17,10 @@ PHONE_NUMBER_ID = os.environ.get('PHONE_NUMBER_ID')
 
 # Static Configuration
 ANCHOR_DATE = date(2024, 8, 21)
-# Add constants for each lesson file for clarity
+# Add constants for each lesson file
 LESSONS_FILE_SEARCH = 'search_lessons.json'
-LESSONS_FILE_ANSWER = 'answer_lessons.json' # <-- NEW
+LESSONS_FILE_ANSWER = 'answer_lessons.json'
+LESSONS_FILE_BEGINNERS = 'beginners_lessons.json' # <-- NEW
 USERS_FILE = 'users.json'
 
 CLASSES = {
@@ -30,26 +31,19 @@ CLASSES = {
 }
 
 # --- 3. HELPER FUNCTIONS ---
-
+# (get_user_file_path, load_json_data, save_json_data, get_current_lesson_index remain unchanged)
 def get_user_file_path():
-    """Returns the correct path for users.json depending on the environment."""
     return f'/tmp/{USERS_FILE}' if 'VERCEL' in os.environ else os.path.join(os.path.dirname(__file__), USERS_FILE)
 
 def load_json_data(file_path):
-    """Loads JSON data from a file."""
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
+        with open(file_path, 'r', encoding='utf-8') as f: return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError): return {}
 
 def save_json_data(data, file_path):
-    """Saves data to a JSON file."""
-    with open(file_path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=4)
+    with open(file_path, 'w', encoding='utf-8') as f: json.dump(data, f, indent=4)
 
 def get_current_lesson_index():
-    """Calculates which lesson index to use based on the current date."""
     today = date.today()
     anchor_week_start = ANCHOR_DATE + relativedelta(weekday=MO(-1))
     current_week_start = today + relativedelta(weekday=MO(-1))
@@ -58,9 +52,62 @@ def get_current_lesson_index():
 
 # --- FORMATTING FUNCTIONS FOR EACH CLASS ---
 
+# --- NEW FORMATTING FUNCTION FOR THE 'BEGINNERS' CLASS ---
+def format_beginners_lesson(lesson):
+    """Formats a lesson for the 'Beginners' class, focusing on the story."""
+    if not lesson:
+        return "I'm sorry, I couldn't find this week's lesson for the Beginners class."
+
+    title = lesson.get('lessonTitle', 'N/A')
+    
+    # Extract Bible references
+    bible_refs_list = [f"{ref['book']} {ref['chapter']}" for ref in lesson.get('bibleReference', []) if ref.get('book') and ref.get('chapter')]
+    bible_refs = ', '.join(bible_refs_list) if bible_refs_list else "Genesis"
+
+    # Start building the message
+    message = f"🖍️ *Beginners Lesson: {title}*\n\n"
+    message += f"_(Story from: {bible_refs})_\n\n"
+    
+    # The primary content is the text section
+    for section in lesson.get('lessonSections', []):
+        if section.get('sectionType') == 'text':
+            message += f"{section.get('sectionContent', 'No story available for this lesson.')}\n\n"
+
+    message += "Have a blessed week! ☀️"
+    return message
+
+def format_answer_lesson(lesson):
+    """Formats a lesson for the 'Answer' class."""
+    # ... (This function remains unchanged)
+    if not lesson: return "I'm sorry, I couldn't find the lesson for the 'Answer' class this week."
+    title = lesson.get('lessonTitle', 'N/A')
+    verse_text = lesson.get('bibleVerse', {}).get('text', 'N/A')
+    verse_ref = lesson.get('bibleVerse', {}).get('reference', '')
+    message = f"📘 *Lesson: {title}*\n\n✨ *Verse of the Week:*\n_{verse_text}_ ({verse_ref})\n\n--- LESSON CONTENT ---\n\n"
+    for section in lesson.get('contentSections', []):
+        section_type = section.get('type')
+        if section_type == 'text': message += f"{section.get('text')}\n\n"
+        elif section_type == 'image': message += f"[ 🖼️ Image: _{section.get('alt', 'An illustration for the lesson.')}_ ]\n\n"
+        elif section_type == 'activity':
+            activity_type = section.get('activityType')
+            if activity_type == 'multipleChoice':
+                message += f"🤔 *Quiz Time!*\nQuestion: {section.get('question')}\n"
+                for i, option in enumerate(section.get('options', []), 1): message += f"{i}. {option}\n"
+                message += "\n"
+            elif activity_type == 'crossword':
+                message += "🧩 *Crossword Puzzle Clues*\n\n"
+                if section.get('across'):
+                    message += "*Across:*\n"
+                    for clue in section['across']: message += f"{clue['number']}. {clue['clue']}\n"
+                if section.get('down'):
+                    message += "\n*Down:*\n"
+                    for clue in section['down']: message += f"{clue['number']}. {clue['clue']}\n"
+                message += "\n"
+    return message
+
 def format_search_lesson(lesson):
     """Formats a lesson for the 'Search' class."""
-    # ... (This function remains unchanged from the previous version)
+    # ... (This function remains unchanged)
     if not lesson: return "I'm sorry, I couldn't find the lesson for this week."
     title = lesson.get('lessonTitle', 'N/A')
     key_verse = lesson.get('keyVerse', 'N/A')
@@ -76,58 +123,7 @@ def format_search_lesson(lesson):
     message += "\n"
     return message
 
-# --- NEW FORMATTING FUNCTION FOR THE 'ANSWER' CLASS ---
-def format_answer_lesson(lesson):
-    """Formats a lesson for the 'Answer' class based on its unique structure."""
-    if not lesson:
-        return "I'm sorry, I couldn't find the lesson for the 'Answer' class this week."
-
-    title = lesson.get('lessonTitle', 'N/A')
-    verse = lesson.get('bibleVerse', {})
-    verse_text = verse.get('text', 'N/A')
-    verse_ref = verse.get('reference', '')
-
-    message = f"📘 *Lesson: {title}*\n\n"
-    message += f"✨ *Verse of the Week:*\n_{verse_text}_ ({verse_ref})\n\n"
-    message += "--- LESSON CONTENT ---\n\n"
-    
-    for section in lesson.get('contentSections', []):
-        section_type = section.get('type')
-
-        if section_type == 'text':
-            message += f"{section.get('text')}\n\n"
-        
-        elif section_type == 'image':
-            # WhatsApp can't render images in text. We describe it instead.
-            alt_text = section.get('alt', 'An illustration for the lesson.')
-            message += f"[ 🖼️ Image: _{alt_text}_ ]\n\n"
-            
-        elif section_type == 'activity':
-            activity_type = section.get('activityType')
-            
-            if activity_type == 'multipleChoice':
-                message += "🤔 *Quiz Time!*\n"
-                message += f"Question: {section.get('question')}\n"
-                for i, option in enumerate(section.get('options', []), 1):
-                    message += f"{i}. {option}\n"
-                message += "\n"
-                
-            elif activity_type == 'crossword':
-                # A full crossword is impossible in text. We'll list the clues.
-                message += "🧩 *Crossword Puzzle Clues*\n\n"
-                if section.get('across'):
-                    message += "*Across:*\n"
-                    for clue in section['across']:
-                        message += f"{clue['number']}. {clue['clue']}\n"
-                if section.get('down'):
-                    message += "\n*Down:*\n"
-                    for clue in section['down']:
-                        message += f"{clue['number']}. {clue['clue']}\n"
-                message += "\n"
-                
-    return message
-
-# --- WHATSAPP MESSAGING FUNCTIONn ---
+# --- WHATSAPP MESSAGING FUNCTION ---
 def send_whatsapp_message(recipient_id, message_text):
     # ... (This function remains unchanged)
     if not all([WHATSAPP_TOKEN, PHONE_NUMBER_ID]): print("ERROR: WhatsApp credentials not set."); return
@@ -143,14 +139,13 @@ def send_whatsapp_message(recipient_id, message_text):
 
 # --- MAIN BOT LOGIC HANDLER (UPDATED) ---
 def handle_bot_logic(user_id, message_text):
-    """Processes user messages, now handling different class types."""
+    """Processes user messages, now handling 'Beginners' class."""
     user_file = get_user_file_path()
     users = load_json_data(user_file)
-    
     message_text_lower = message_text.lower().strip()
     response_text = ""
 
-    # State management for 'switch' command
+    # State management for 'switch'
     if message_text_lower == "switch":
         if user_id in users and 'class' in users[user_id]:
             del users[user_id]['class']
@@ -163,11 +158,11 @@ def handle_bot_logic(user_id, message_text):
             users[user_id] = {'class': class_name}
             save_json_data(users, user_file)
             response_text = (f"Great! You're registered for the *{class_name}* class.\n\n"
-                             "Type `lesson` to get the latest lesson, or `menu` for more options.")
+                             "Type `lesson` to get the latest lesson.")
         else:
-            response_text = ("Welcome to our Sunday School Assistant! 🙏\n\n"
-                             "Please select your class by replying with the number:\n\n"
-                             "*1.* Beginners\n*2.* Primary Pals\n*3.* Answer\n*4.* Search")
+            response_text = ("Welcome! Please select a class by replying with the number:\n\n"
+                             "*1.* Beginners (Ages 2-5)\n*2.* Primary Pals (1st - 3rd Grade)\n"
+                             "*3.* Answer (4th - 8th Grade)\n*4.* Search (High School - Adults)")
     
     # Registered user logic
     else:
@@ -176,13 +171,13 @@ def handle_bot_logic(user_id, message_text):
             lesson_index = get_current_lesson_index()
 
             # --- UPDATED: Route to the correct formatter based on class ---
-            if "Search" in user_class:
-                lessons_path = os.path.join(os.path.dirname(__file__), LESSONS_FILE_SEARCH)
+            if "Beginners" in user_class:
+                lessons_path = os.path.join(os.path.dirname(__file__), LESSONS_FILE_BEGINNERS)
                 lessons_data = load_json_data(lessons_path)
                 if lessons_data and 0 <= lesson_index < len(lessons_data):
-                    response_text = format_search_lesson(lessons_data[lesson_index])
+                    response_text = format_beginners_lesson(lessons_data[lesson_index])
                 else:
-                    response_text = "Sorry, no 'Search' lesson is available for this week."
+                    response_text = "Sorry, no 'Beginners' lesson is available for this week."
             
             elif "Answer" in user_class:
                 lessons_path = os.path.join(os.path.dirname(__file__), LESSONS_FILE_ANSWER)
@@ -192,6 +187,14 @@ def handle_bot_logic(user_id, message_text):
                 else:
                     response_text = "Sorry, no 'Answer' lesson is available for this week."
             
+            elif "Search" in user_class:
+                lessons_path = os.path.join(os.path.dirname(__file__), LESSONS_FILE_SEARCH)
+                lessons_data = load_json_data(lessons_path)
+                if lessons_data and 0 <= lesson_index < len(lessons_data):
+                    response_text = format_search_lesson(lessons_data[lesson_index])
+                else:
+                    response_text = "Sorry, no 'Search' lesson is available for this week."
+
             else:
                 response_text = f"Content for the *{user_class}* class is coming soon!"
 
