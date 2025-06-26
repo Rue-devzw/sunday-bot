@@ -24,13 +24,13 @@ USERS_FILE = 'users.json'
 
 CLASSES = { "1": "Beginners", "2": "Primary Pals", "3": "Answer", "4": "Search" }
 HYMNBOOKS = {
-    #"1": {"name": "Great Hymns of Faith", "file": "great_hymns_of_faith.json"},
-    # "2": {"name": "Celestial Hymns", "file": "celestial_hymns.json"},
+   # "1": {"name": "Great Hymns of Faith", "file": "great_hymns_of_faith.json"},
+    #"2": {"name": "Celestial Hymns", "file": "celestial_hymns.json"},
     "1": {"name": "Nziyo Dzekurumbidza (Shona Hymns)", "file": "shona_hymns.json"}
 }
 
 # --- 3. HELPER & FORMATTING FUNCTIONS ---
-# (All helper and formatting functions remain unchanged. They are included here for completeness.)
+# (All these functions remain unchanged. They are required for the script to work.)
 def get_user_file_path():
     return f'/tmp/{USERS_FILE}' if 'VERCEL' in os.environ else os.path.join(os.path.dirname(__file__), USERS_FILE)
 def load_json_data(file_path):
@@ -40,27 +40,19 @@ def load_json_data(file_path):
 def save_json_data(data, file_path):
     with open(file_path, 'w', encoding='utf-8') as f: json.dump(data, f, indent=4)
 def get_current_lesson_index():
-    today = date.today()
-    anchor_week_start = ANCHOR_DATE + relativedelta(weekday=MO(-1))
-    current_week_start = today + relativedelta(weekday=MO(-1))
+    today = date.today(); anchor_week_start = ANCHOR_DATE + relativedelta(weekday=MO(-1)); current_week_start = today + relativedelta(weekday=MO(-1))
     week_difference = (current_week_start - anchor_week_start).days // 7
     return week_difference if week_difference >= 0 else -1
-
 def format_hymn(hymn):
     if not hymn: return "Sorry, I couldn't find a hymn with that number in your selected hymnbook."
-    title = hymn.get('title', 'No Title'); hymn_number = hymn.get('number', '#')
-    message = f"🎶 *Hymn #{hymn_number}: {title}*\n\n"
+    title = hymn.get('title', 'No Title'); hymn_number = hymn.get('number', '#'); message = f"🎶 *Hymn #{hymn_number}: {title}*\n\n"
     verses = hymn.get('verses', []); chorus = hymn.get('chorus', []); parts = hymn.get('parts', [])
     if verses:
-        for i, verse_lines in enumerate(verses, 1):
-            message += f"*{i}.*\n" + "\n".join(verse_lines) + "\n\n"
+        for i, verse_lines in enumerate(verses, 1): message += f"*{i}.*\n" + "\n".join(verse_lines) + "\n\n"
     if chorus: message += "*Chorus:*\n" + "\n".join(chorus) + "\n\n"
     if parts:
-        for part in parts:
-            message += f"*Part {part['part']}*\n"
-            for verse_lines in part['verses']: message += "\n".join(verse_lines) + "\n\n"
+        for part in parts: message += f"*Part {part['part']}*\n"; [message := message + "\n".join(v_lines) + "\n\n" for v_lines in part['verses']]
     return message.strip()
-# ... Other lesson formatters ...
 def format_beginners_lesson(lesson):
     if not lesson: return "Sorry, no 'Beginners' lesson is available."
     title = lesson.get('lessonTitle', 'N/A')
@@ -81,8 +73,7 @@ def format_answer_lesson(lesson):
         elif s_type == 'image': message += f"[ 🖼️ Image: _{section.get('alt', 'An illustration.')}_ ]\n\n"
         elif s_type == 'activity':
             a_type = section.get('activityType')
-            if a_type == 'multipleChoice':
-                message += f"🤔 *Quiz Time!*\nQuestion: {section.get('question')}\n"; [message := message + f"{i}. {opt}\n" for i, opt in enumerate(section.get('options', []), 1)]; message += "\n"
+            if a_type == 'multipleChoice': message += f"🤔 *Quiz Time!*\nQuestion: {section.get('question')}\n"; [message := message + f"{i}. {opt}\n" for i, opt in enumerate(section.get('options', []), 1)]; message += "\n"
             elif a_type == 'crossword':
                 message += "🧩 *Crossword Puzzle Clues*\n\n"
                 if section.get('across'): message += "*Across:*\n"; [message := message + f"{c['number']}. {c['clue']}\n" for c in section['across']]
@@ -121,32 +112,40 @@ def handle_bot_logic(user_id, message_text):
     
     user_profile = users.get(user_id, {})
     
-    # Check for 'reset' command to go back to the main menu
+    # State reset command
     if message_text_lower == 'reset':
-        user_profile.pop('mode', None) # Remove the user's mode
+        user_profile = {} # Clear the entire profile for a fresh start
         users[user_id] = user_profile
         save_json_data(users, user_file)
-        # Fall through to show the main menu
 
-    # Step 1: Mode Selection (Lessons or Hymnbook)
+    # --- Step 1: Mode Selection (Lessons or Hymnbook) ---
     if 'mode' not in user_profile:
         if message_text_lower == '1':
             user_profile['mode'] = 'lessons'
             users[user_id] = user_profile
             save_json_data(users, user_file)
-            # Now trigger the class selection
+            # --- FIX IS HERE: Immediately ask for the next step ---
+            response_text = "Please select your Sunday School class:\n\n*1.* Beginners\n*2.* Primary Pals\n*3.* Answer\n*4.* Search"
+            send_whatsapp_message(user_id, response_text)
+            return # End processing for this turn
         elif message_text_lower == '2':
             user_profile['mode'] = 'hymnbook'
             users[user_id] = user_profile
             save_json_data(users, user_file)
-            # Now trigger the hymnbook selection
+            # --- FIX IS HERE: Immediately ask for the next step ---
+            hymnbook_menu = "Please select your preferred hymnbook:\n\n"
+            for key, book in HYMNBOOKS.items(): hymnbook_menu += f"*{key}.* {book['name']}\n"
+            send_whatsapp_message(user_id, hymnbook_menu)
+            return # End processing for this turn
         else:
             send_whatsapp_message(user_id, "Welcome to the Sunday School Assistant! 🙏\n\nPlease choose a section by replying with a number:\n\n*1.* Weekly Lessons\n*2.* Hymnbook")
             return
 
+    # --- Step 2: Handle commands within the selected mode ---
+    
     # --- PATH 1: USER IS IN 'LESSONS' MODE ---
     if user_profile.get('mode') == 'lessons':
-        # Check if they have selected a class
+        # If class is not set, we are expecting a class selection
         if 'class' not in user_profile:
             if message_text_lower in CLASSES:
                 class_name = CLASSES[message_text_lower]
@@ -155,10 +154,10 @@ def handle_bot_logic(user_id, message_text):
                 save_json_data(users, user_file)
                 send_whatsapp_message(user_id, f"Great! Your class is set to *{class_name}*.\n\nType `lesson` to get your weekly material.\nType `reset` to go back to the main menu.")
             else:
-                send_whatsapp_message(user_id, "Please select your Sunday School class:\n\n*1.* Beginners\n*2.* Primary Pals\n*3.* Answer\n*4.* Search")
+                send_whatsapp_message(user_id, "Sorry, that's not a valid class number. Please try again.\n\n*1.* Beginners\n*2.* Primary Pals\n*3.* Answer\n*4.* Search")
             return
 
-        # They have a class selected, process lesson commands
+        # User has a class set, so process the 'lesson' command
         if message_text_lower == 'lesson':
             lesson_index = get_current_lesson_index()
             user_class = user_profile['class']
@@ -168,8 +167,7 @@ def handle_bot_logic(user_id, message_text):
             
             for key, filename in lesson_files.items():
                 if key in user_class:
-                    lessons_path = os.path.join(os.path.dirname(__file__), filename)
-                    lessons_data = load_json_data(lessons_path)
+                    lessons_path = os.path.join(os.path.dirname(__file__), filename); lessons_data = load_json_data(lessons_path)
                     if lessons_data and 0 <= lesson_index < len(lessons_data):
                         response_text = formatters[key](lessons_data[lesson_index])
                     break
@@ -179,7 +177,7 @@ def handle_bot_logic(user_id, message_text):
 
     # --- PATH 2: USER IS IN 'HYMNBOOK' MODE ---
     elif user_profile.get('mode') == 'hymnbook':
-        # Check if they have selected a hymnbook
+        # If hymnbook is not set, we are expecting a hymnbook selection
         if 'hymnbook' not in user_profile:
             if message_text_lower in HYMNBOOKS:
                 hymnbook_choice = HYMNBOOKS[message_text_lower]
@@ -188,12 +186,12 @@ def handle_bot_logic(user_id, message_text):
                 save_json_data(users, user_file)
                 send_whatsapp_message(user_id, f"Great! Your hymnbook is set to *{hymnbook_choice['name']}*.\n\nType `hymn [number]` to get a hymn (e.g., `hymn 103`).\nType `reset` to go back to the main menu.")
             else:
-                hymnbook_menu = "Please select your preferred hymnbook:\n\n"
+                hymnbook_menu = "Sorry, that's not a valid hymnbook number. Please try again.\n\n"
                 for key, book in HYMNBOOKS.items(): hymnbook_menu += f"*{key}.* {book['name']}\n"
                 send_whatsapp_message(user_id, hymnbook_menu)
             return
         
-        # They have a hymnbook selected, process hymn commands
+        # User has a hymnbook set, so process 'hymn' commands
         if message_text_lower.startswith('hymn '):
             hymns_path = os.path.join(os.path.dirname(__file__), 'hymnbooks', user_profile['hymnbook'])
             hymns_data = load_json_data(hymns_path)
@@ -206,7 +204,6 @@ def handle_bot_logic(user_id, message_text):
             send_whatsapp_message(user_id, response_text)
         else:
             send_whatsapp_message(user_id, "You are in the *Hymnbook* section.\n\nType `hymn [number]` to get a hymn, or `reset` to return to the main menu.")
-
 
 # --- FLASK WEBHOOK ROUTES ---
 # (Unchanged)
