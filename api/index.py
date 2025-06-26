@@ -82,7 +82,7 @@ def send_whatsapp_message(recipient_id, message_text):
     if not all([WHATSAPP_TOKEN, PHONE_NUMBER_ID]):
         print("ERROR: WhatsApp credentials are not set in environment variables.")
         return
-    url = f"https://graph.facebook.com/v22.0/{PHONE_NUMBER_ID}/messages"
+    url = f"https://graph.facebook.com/v23.0/{PHONE_NUMBER_ID}/messages"
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
     data = {"messaging_product": "whatsapp", "to": recipient_id, "text": {"body": message_text}}
     try:
