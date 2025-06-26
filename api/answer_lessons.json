@@ -1,0 +1,42 @@
+
+[{
+    "lessonTitle": "The Story of Creation",
+    "lessonNumber": 1,
+    "bibleVerse": {
+      "text": "All things were made by him; and without him was not any thing made. – John 1:3",
+      "reference": "John 1:3"
+    },
+    "contentSections": [
+      {
+        "type": "text",
+        "text": "Questions raced through Bailee's mind..."
+      },
+      {
+        "type": "image",
+        "src": "lesson_content/images/creation.jpg",
+        "alt": "Illustration of creation"
+      },
+      {
+        "type": "activity",
+        "activityType": "multipleChoice",
+        "question": "Who created the heavens?",
+        "options": ["God", "Humans", "Aliens"],
+        "correctAnswer": "God"
+      },
+       {
+        "type": "activity",
+        "activityType": "crossword",
+        "rows": 12,
+        "columns": 12,
+        "across": [
+            {"number": 3, "clue": "Eve desired to be ...", "answer": "equal", "row": 0, "col": 0, "direction": "horizontal"}
+        
+        ],
+        "down": [
+            {"number": 1, "clue": "Of what tree did God forbid Adam to eat?", "answer": "knowledge", "row": 0, "col": 0, "direction": "vertical"}
+        
+        ]
+      }
+    ]
+  }
+]
