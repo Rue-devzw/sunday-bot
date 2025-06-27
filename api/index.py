@@ -27,11 +27,13 @@ LESSONS_FILE_SEARCH = 'search_lessons.json'
 LESSONS_FILE_ANSWER = 'answer_lessons.json'
 LESSONS_FILE_BEGINNERS = 'beginners_lessons.json'
 USERS_FILE = 'users.json'
-HYMNBOOKS_DIR = 'hymnbooks'
+HYMNBOOKS_DIR = 'hymnbooks'  # Directory for hymnbooks
 
 CLASSES = { "1": "Beginners", "2": "Primary Pals", "3": "Answer", "4": "Search" }
+# UPDATED HYMNBOOKS DICTIONARY
 HYMNBOOKS = {
-    "1": {"name": "Nziyo Dzekurumbidza (Shona Hymns)", "file": "shona_hymns.json"}
+    "1": {"name": "Nziyo Dzekurumbidza (Shona Hymns)", "file": "shona_hymns.json"},
+    "2": {"name": "Great Hymns of Faith (English)", "file": "english_hymns.json"}
 }
 
 # --- 3. HELPER & FORMATTING FUNCTIONS ---
@@ -44,9 +46,7 @@ def load_json_data(file_path):
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        # Return an empty list for lesson files, and an empty dict for user files
-        return [] if 'lessons' in file_path else {}
-
+        return [] if 'lessons' in file_path or 'hymn' in file_path else {}
 
 def save_json_data(data, file_path):
     with open(file_path, 'w', encoding='utf-8') as f:
@@ -91,49 +91,32 @@ def format_beginners_lesson(lesson):
     message += "Have a blessed week! ☀️"
     return message
 
-# --- FUNCTION CORRECTED HERE ---
 def format_search_answer_lesson(lesson, lesson_type):
-    """Formats a lesson for the Search or Answer class."""
     if not lesson:
         return f"Sorry, no '{lesson_type}' lesson is available for this week."
-
     title = lesson.get('lessonTitle', 'N/A')
-    # FIX: Changed 'memoryVerse' to 'keyVerse' to match your JSON file
-    memory_verse = lesson.get('keyVerse', 'N/A') 
-
+    memory_verse = lesson.get('keyVerse', 'N/A')
     message = f"📚 *{lesson_type} Lesson: {title}*\n\n"
-    # FIX: Updated formatting to use the single 'keyVerse' field
     message += f"📖 *Key Verse:*\n_{memory_verse}_\n\n"
     message += "----------\n\n"
-
-    # We will only display sections of type 'text' and 'question' for clarity
     for section in lesson.get('lessonSections', []):
         if section.get('sectionType') in ['text', 'question']:
             section_title = section.get('sectionTitle', 'Section')
             section_content = section.get('sectionContent', 'No content available.')
             message += f"📌 *{section_title}*\n{section_content}\n\n"
-
     message += "Have a blessed week! ✨"
     return message.strip()
 
-# --- AI "THINKING" FUNCTION using Groq ---
 def get_ai_response(question, context):
     if not groq_client:
         return "Sorry, the AI thinking module is currently unavailable."
-    
     system_prompt = "You are a friendly and helpful Sunday School assistant. Your answers must be based *only* on the provided lesson text (the context). If the answer is not in the text, say that you cannot answer based on the provided material. Keep your answers concise and easy to understand."
     user_prompt = f"Based on the following lesson context, please answer the user's question.\n\n--- LESSON CONTEXT ---\n{context}\n\n--- USER QUESTION ---\n{question}"
-
     try:
         completion = groq_client.chat.completions.create(
             model="llama3-8b-8192",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.3,
-            max_tokens=250 # Increased slightly for more thorough answers
-        )
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+            temperature=0.3, max_tokens=250)
         return completion.choices[0].message.content.strip()
     except Exception as e:
         print(f"Groq API Error: {e}")
@@ -145,29 +128,33 @@ def handle_bot_logic(user_id, message_text):
     users = load_json_data(user_file)
     message_text_lower = message_text.lower().strip()
     user_profile = users.get(user_id, {})
+    original_profile_state = json.dumps(user_profile)
 
     if message_text_lower == 'reset':
         user_profile = {}
-        # No need for users[user_id] = user_profile here, as it's handled below if a new profile is created
         send_whatsapp_message(user_id, "Your session has been reset. Welcome! 🙏\n\nPlease choose a section:\n\n*1.* Weekly Lessons\n*2.* Hymnbook")
-    
-    # Save the user profile at the end of the function to capture all changes
-    original_profile_state = json.dumps(user_profile)
+        users.pop(user_id, None) # Remove the user's old profile
+        save_json_data(users, user_file)
+        return
 
     if 'mode' not in user_profile:
         if message_text_lower == '1':
             user_profile['mode'] = 'lessons'
-            send_whatsapp_message(user_id, "Please select your Sunday School class:\n\n*1.* Beginners\n*2.* Primary Pals\n*3.* Answer\n*4.* Search")
+            hymnbook_menu = "Please select your Sunday School class:\n\n"
+            for k, v in CLASSES.items():
+                hymnbook_menu += f"*{k}.* {v}\n"
+            send_whatsapp_message(user_id, hymnbook_menu.strip())
         elif message_text_lower == '2':
             user_profile['mode'] = 'hymnbook'
             hymnbook_menu = "Please select your preferred hymnbook:\n\n"
             for k, b in HYMNBOOKS.items():
                 hymnbook_menu += f"*{k}.* {b['name']}\n"
-            send_whatsapp_message(user_id, hymnbook_menu)
+            send_whatsapp_message(user_id, hymnbook_menu.strip())
         else:
             send_whatsapp_message(user_id, "Welcome! 🙏\n\nPlease choose a section:\n\n*1.* Weekly Lessons\n*2.* Hymnbook")
 
     elif user_profile.get('mode') == 'lessons':
+        # ... [Lessons logic remains the same] ...
         if 'class' not in user_profile:
             if message_text_lower in CLASSES:
                 class_name = CLASSES[message_text_lower]
@@ -175,84 +162,100 @@ def handle_bot_logic(user_id, message_text):
                 send_whatsapp_message(user_id, f"Great! Class set to *{class_name}*.\n\nType `lesson` or `ask [your question]`.\nType `reset` to go back.")
             else:
                 send_whatsapp_message(user_id, "Invalid class number. Please try again.")
-        
         elif message_text_lower.startswith('ask '):
             question = message_text[4:].strip()
             if not question:
                 send_whatsapp_message(user_id, "Please type a question after the word `ask`.")
-                return
-            
-            send_whatsapp_message(user_id, "🤔 Thinking...")
-            lesson_index = get_current_lesson_index()
-            user_class = user_profile['class']
-            context = ""
-            
-            lesson_files = { "Beginners": LESSONS_FILE_BEGINNERS, "Answer": LESSONS_FILE_ANSWER, "Search": LESSONS_FILE_SEARCH }
-            lesson_file_name = lesson_files.get(user_class)
-            
-            if lesson_file_name:
-                lessons_path = os.path.join(os.path.dirname(__file__), lesson_file_name)
-                lessons_data = load_json_data(lessons_path)
-                if lessons_data and 0 <= lesson_index < len(lessons_data):
-                    context = json.dumps(lessons_data[lesson_index])
-            
-            if not context:
-                send_whatsapp_message(user_id, "Sorry, I can't find this week's lesson material to answer questions about.")
-                return
-
-            ai_answer = get_ai_response(question, context)
-            send_whatsapp_message(user_id, ai_answer)
-
+            else:
+                send_whatsapp_message(user_id, "🤔 Thinking...")
+                lesson_index = get_current_lesson_index()
+                user_class = user_profile['class']
+                context = ""
+                lesson_files = {"Beginners": LESSONS_FILE_BEGINNERS, "Answer": LESSONS_FILE_ANSWER, "Search": LESSONS_FILE_SEARCH}
+                lesson_file_name = lesson_files.get(user_class)
+                if lesson_file_name:
+                    lessons_path = os.path.join(os.path.dirname(__file__), lesson_file_name)
+                    lessons_data = load_json_data(lessons_path)
+                    if lessons_data and 0 <= lesson_index < len(lessons_data):
+                        context = json.dumps(lessons_data[lesson_index])
+                if not context:
+                    send_whatsapp_message(user_id, "Sorry, I can't find this week's lesson material to answer questions about.")
+                else:
+                    ai_answer = get_ai_response(question, context)
+                    send_whatsapp_message(user_id, ai_answer)
         elif message_text_lower == 'lesson':
             send_whatsapp_message(user_id, "Fetching this week's lesson...")
             lesson_index = get_current_lesson_index()
             user_class = user_profile.get('class')
-
             if lesson_index < 0:
                 send_whatsapp_message(user_id, "It seems there are no lessons scheduled for this week.")
-                return
-
-            lesson_files = { "Beginners": LESSONS_FILE_BEGINNERS, "Answer": LESSONS_FILE_ANSWER, "Search": LESSONS_FILE_SEARCH }
-            lesson_file_name = lesson_files.get(user_class)
-
-            if not lesson_file_name:
-                send_whatsapp_message(user_id, f"Sorry, lessons for the '{user_class}' class are not available yet.")
-                return
-
-            lessons_path = os.path.join(os.path.dirname(__file__), lesson_file_name)
-            lessons_data = load_json_data(lessons_path)
-
-            if lessons_data and 0 <= lesson_index < len(lessons_data):
-                lesson = lessons_data[lesson_index]
-                formatted_message = ""
-                if user_class == "Beginners":
-                    formatted_message = format_beginners_lesson(lesson)
-                elif user_class in ["Search", "Answer"]:
-                    formatted_message = format_search_answer_lesson(lesson, user_class)
-                else:
-                    formatted_message = f"Sorry, I don't know how to format the lesson for the '{user_class}' class yet."
-                send_whatsapp_message(user_id, formatted_message)
             else:
-                send_whatsapp_message(user_id, "Sorry, I couldn't find this week's lesson. It might not be uploaded yet.")
-        
+                lesson_files = {"Beginners": LESSONS_FILE_BEGINNERS, "Answer": LESSONS_FILE_ANSWER, "Search": LESSONS_FILE_SEARCH}
+                lesson_file_name = lesson_files.get(user_class)
+                if not lesson_file_name:
+                    send_whatsapp_message(user_id, f"Sorry, lessons for the '{user_class}' class are not available yet.")
+                else:
+                    lessons_path = os.path.join(os.path.dirname(__file__), lesson_file_name)
+                    lessons_data = load_json_data(lessons_path)
+                    if lessons_data and 0 <= lesson_index < len(lessons_data):
+                        lesson = lessons_data[lesson_index]
+                        formatted_message = ""
+                        if user_class == "Beginners":
+                            formatted_message = format_beginners_lesson(lesson)
+                        elif user_class in ["Search", "Answer"]:
+                            formatted_message = format_search_answer_lesson(lesson, user_class)
+                        else:
+                            formatted_message = f"Sorry, I don't know how to format the lesson for the '{user_class}' class yet."
+                        send_whatsapp_message(user_id, formatted_message)
+                    else:
+                        send_whatsapp_message(user_id, "Sorry, I couldn't find this week's lesson. It might not be uploaded yet.")
         else:
             send_whatsapp_message(user_id, "In *Lessons* section: type `lesson`, `ask [question]`, or `reset`.")
 
+    # --- NEW, FULLY IMPLEMENTED HYMNBOOK LOGIC ---
     elif user_profile.get('mode') == 'hymnbook':
-        # ... hymnbook logic ...
-        send_whatsapp_message(user_id, "Hymnbook logic here...")
+        if 'hymnbook' not in user_profile:
+            # Stage 1: User needs to select a hymnbook
+            if message_text_lower in HYMNBOOKS:
+                selected_hymnbook = HYMNBOOKS[message_text_lower]
+                user_profile['hymnbook'] = selected_hymnbook['file']
+                send_whatsapp_message(user_id, f"You have selected *{selected_hymnbook['name']}*.\n\nPlease type a hymn number, or `reset` to start over.")
+            else:
+                send_whatsapp_message(user_id, "Invalid selection. Please choose a hymnbook from the list.")
+        else:
+            # Stage 2: User has selected a hymnbook and is now requesting a hymn number
+            if message_text.isdigit():
+                hymn_number_to_find = int(message_text)
+                hymnbook_file = user_profile['hymnbook']
+                
+                # Construct the full path to the hymnbook file
+                hymns_path = os.path.join(os.path.dirname(__file__), HYMNBOOKS_DIR, hymnbook_file)
+                hymns_data = load_json_data(hymns_path)
+                
+                found_hymn = None
+                if hymns_data:
+                    for hymn in hymns_data:
+                        if hymn.get('number') == hymn_number_to_find:
+                            found_hymn = hymn
+                            break
+                
+                if found_hymn:
+                    formatted_hymn = format_hymn(found_hymn)
+                    send_whatsapp_message(user_id, formatted_hymn)
+                else:
+                    send_whatsapp_message(user_id, f"Sorry, I couldn't find hymn #{hymn_number_to_find} in that hymnbook.")
+            else:
+                send_whatsapp_message(user_id, "Please type a valid hymn number, or `reset` to start over.")
 
-    # Save user state if it has changed
     if json.dumps(user_profile) != original_profile_state:
         users[user_id] = user_profile
         save_json_data(users, user_file)
-
 
 def send_whatsapp_message(recipient_id, message_text):
     if not all([WHATSAPP_TOKEN, PHONE_NUMBER_ID]):
         print("ERROR: WhatsApp credentials not set.")
         return
-    url = f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/messages" # Updated API version
+    url = f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/messages"
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
     data = {"messaging_product": "whatsapp", "to": recipient_id, "text": {"body": message_text}}
     try:
@@ -269,7 +272,6 @@ def whatsapp_webhook():
         if request.args.get('hub.verify_token') == VERIFY_TOKEN:
             return request.args.get('hub.challenge'), 200
         return 'Verification token mismatch', 403
-    
     if request.method == 'POST':
         data = request.get_json()
         print(f"Incoming data: {json.dumps(data, indent=2)}")
