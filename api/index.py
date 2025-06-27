@@ -34,9 +34,9 @@ HYMNBOOKS_DIR = 'hymnbooks'
 
 CLASSES = { "1": "Beginners", "2": "Primary Pals", "3": "Answer", "4": "Search" }
 HYMNBOOKS = {
-    "1": {"name": "Great Hymns of Faith", "file": "great_hymns_of_faith.json"},
-    "2": {"name": "Celestial Hymns", "file": "celestial_hymns.json"},
-    "3": {"name": "Nziyo Dzekurumbidza (Shona Hymns)", "file": "shona_hymns.json"}
+    #"1": {"name": "Great Hymns of Faith", "file": "great_hymns_of_faith.json"},
+    #"2": {"name": "Celestial Hymns", "file": "celestial_hymns.json"},
+    "1": {"name": "Nziyo Dzekurumbidza (Shona Hymns)", "file": "shona_hymns.json"}
 }
 
 # --- 3. HELPER & FORMATTING FUNCTIONS ---
