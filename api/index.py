@@ -34,6 +34,7 @@ HYMNBOOKS = {
 }
 
 # --- 3. HELPER & FORMATTING FUNCTIONS ---
+# (All these functions are correct and required. Ensure they are in your file.)
 def get_user_file_path():
     return f'/tmp/{USERS_FILE}' if 'VERCEL' in os.environ else os.path.join(os.path.dirname(__file__), USERS_FILE)
 def load_json_data(file_path):
@@ -129,13 +130,14 @@ def send_whatsapp_message(recipient_id, message_text):
         response.raise_for_status(); print(f"Message sent to {recipient_id}: {response.status_code}, {response.text}")
     except requests.exceptions.RequestException as e: print(f"Error sending message: {e}")
 
-# --- 6. MAIN BOT LOGIC HANDLER ---
+# --- 6. MAIN BOT LOGIC HANDLER (WITH FIX) ---
 def handle_bot_logic(user_id, message_text):
-    # (The entire handle_bot_logic function remains the same as the previous step)
     user_file = get_user_file_path(); users = load_json_data(user_file); message_text_lower = message_text.lower().strip()
     user_profile = users.get(user_id, {})
     if message_text_lower == 'reset': user_profile = {}; users[user_id] = user_profile; save_json_data(users, user_file)
+
     if 'mode' not in user_profile:
+        # ... (Onboarding logic is correct and remains the same)
         if message_text_lower == '1':
             user_profile['mode'] = 'lessons'; users[user_id] = user_profile; save_json_data(users, user_file)
             send_whatsapp_message(user_id, "Please select your Sunday School class:\n\n*1.* Beginners\n*2.* Primary Pals\n*3.* Answer\n*4.* Search")
@@ -146,14 +148,20 @@ def handle_bot_logic(user_id, message_text):
         else:
             send_whatsapp_message(user_id, "Welcome! 🙏\n\nPlease choose a section:\n\n*1.* Weekly Lessons\n*2.* Hymnbook")
         return
+
     if user_profile.get('mode') == 'lessons':
         if 'class' not in user_profile:
+            # ... (Class selection logic is correct and remains the same)
             if message_text_lower in CLASSES:
                 class_name = CLASSES[message_text_lower]; user_profile['class'] = class_name; users[user_id] = user_profile; save_json_data(users, user_file)
                 send_whatsapp_message(user_id, f"Great! Class set to *{class_name}*.\n\nType `lesson` for your material or `ask` to start a Q&A session.\nType `reset` to go back.")
             else:
                 send_whatsapp_message(user_id, "Sorry, that's not a valid class number. Please try again.")
             return
+            
+        # --- FIXED LOGIC FOR REGISTERED USERS IN LESSONS MODE ---
+        
+        # Handle 'ask' mode entry/exit first
         if message_text_lower == 'ask':
             user_profile['ask_mode'] = True; users[user_id] = user_profile; save_json_data(users, user_file)
             send_whatsapp_message(user_id, "You are now in Q&A mode. Ask me anything about this week's lesson!\n\nType `stop` to exit Q&A.")
@@ -162,29 +170,45 @@ def handle_bot_logic(user_id, message_text):
             user_profile.pop('ask_mode', None); users[user_id] = user_profile; save_json_data(users, user_file)
             send_whatsapp_message(user_id, "You have exited Q&A mode.")
             return
+
+        # If in 'ask' mode, all other messages are questions for the AI
         if user_profile.get('ask_mode'):
-            send_whatsapp_message(user_id, "🤔 Thinking..."); lesson_index = get_current_lesson_index(); user_class = user_profile['class']; context = ""
+            question = message_text # The user's entire message is the question
+            send_whatsapp_message(user_id, "🤔 Thinking...")
+            lesson_index = get_current_lesson_index(); user_class = user_profile['class']; context = ""
             lesson_files = { "Beginners": LESSONS_FILE_BEGINNERS, "Answer": LESSONS_FILE_ANSWER, "Search": LESSONS_FILE_SEARCH }
             for key, filename in lesson_files.items():
                 if key in user_class:
                     lessons_path = os.path.join(os.path.dirname(__file__), filename); lessons_data = load_json_data(lessons_path)
                     if lessons_data and 0 <= lesson_index < len(lessons_data): context = build_lesson_context(lessons_data[lesson_index], user_class); break
-            if not context: send_whatsapp_message(user_id, "Sorry, I can't find lesson material to answer questions about right now."); return
-            ai_answer = get_ai_response(message_text, context); send_whatsapp_message(user_id, ai_answer)
+            
+            if not context:
+                send_whatsapp_message(user_id, "Sorry, I can't find lesson material to answer questions about right now.")
+                return
+            
+            ai_answer = get_ai_response(question, context)
+            send_whatsapp_message(user_id, ai_answer)
             return
+
+        # If not in 'ask' mode, check for other commands like 'lesson'
         if message_text_lower == 'lesson':
-            send_whatsapp_message(user_id, "Fetching lesson..."); lesson_index = get_current_lesson_index(); user_class = user_profile['class']
+            lesson_index = get_current_lesson_index(); user_class = user_profile['class']
             response_text = "Sorry, no lesson is available for your class this week."
+            lesson_files = { "Beginners": LESSONS_FILE_BEGINNERS, "Answer": LESSONS_FILE_ANSWER, "Search": LESSONS_FILE_SEARCH }
             formatters = { "Beginners": format_beginners_lesson, "Answer": format_answer_lesson, "Search": format_search_lesson }
+            
             for key, filename in lesson_files.items():
                 if key in user_class:
                     lessons_path = os.path.join(os.path.dirname(__file__), filename); lessons_data = load_json_data(lessons_path)
-                    if lessons_data and 0 <= lesson_index < len(lessons_data): response_text = formatters[key](lessons_data[lesson_index]); break
+                    if lessons_data and 0 <= lesson_index < len(lessons_data):
+                        response_text = formatters[key](lessons_data[lesson_index]); break
             send_whatsapp_message(user_id, response_text)
         else:
-            send_whatsapp_message(user_id, "You're in *Lessons*.\n- Type `lesson`\n- Type `ask`\n- Type `reset`")
+            send_whatsapp_message(user_id, "You're in *Lessons*.\n- Type `lesson`\n- Type `ask` to start Q&A\n- Type `reset`")
         return
+
     elif user_profile.get('mode') == 'hymnbook':
+        # ... (Hymnbook logic is correct and remains the same)
         if 'hymnbook' not in user_profile:
             if message_text_lower in HYMNBOOKS:
                 hymnbook_choice = HYMNBOOKS[message_text_lower]; user_profile['hymnbook'] = hymnbook_choice['file']; users[user_id] = user_profile; save_json_data(users, user_file)
@@ -206,6 +230,7 @@ def handle_bot_logic(user_id, message_text):
         return
 
 # --- 7. FLASK WEBHOOK ROUTES ---
+# (Unchanged)
 @app.route('/whatsapp', methods=['GET', 'POST'])
 def whatsapp_webhook():
     if request.method == 'GET':
@@ -224,8 +249,6 @@ def whatsapp_webhook():
         except Exception as e: print(f"Error processing message: {e}")
         return 'OK', 200
 
-# --- FIX IS HERE: Adding the missing health check route ---
 @app.route('/')
 def health_check():
-    """A simple route to check if the server is running."""
     return "SundayBot AI (Groq) is running!", 200
