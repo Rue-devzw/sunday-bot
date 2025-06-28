@@ -43,7 +43,6 @@ BIBLES = {
     "2": {"name": "English Bible (KJV)", "file": "english_bible.db"}
 }
 
-# --- NEW: LANGUAGES DICTIONARY ---
 LANGUAGES = {
     "1": "Shona",
     "2": "Ndebele",
@@ -135,6 +134,7 @@ def format_hymn(hymn):
             for v_lines in part['verses']: message += "\n".join(v_lines) + "\n\n"
     return message.strip()
 
+# MODIFIED: Added <no_translate> tags around the key verse
 def format_beginners_lesson(lesson):
     if not lesson:
         return "Sorry, no 'Beginners' lesson is available for this week."
@@ -153,8 +153,12 @@ def format_beginners_lesson(lesson):
     message = f"🖍️ *Beginners Lesson{lesson_number}: {title}*\n\n"
     if bible_refs != "N/A":
         message += f"📖 *Story from:*\n_{bible_refs}_\n\n"
+    
     if memory_verse:
-        message += f"🔑 *Memory Verse:*\n_{memory_verse}_\n\n"
+        message += "<no_translate>\n"
+        message += f"🔑 *Key Verse:*\n_{memory_verse}_\n\n"
+        message += "</no_translate>"
+    
     message += "----------\n\n"
 
     has_content = False
@@ -174,6 +178,7 @@ def format_beginners_lesson(lesson):
     
     return message.strip()
 
+# MODIFIED: Added <no_translate> tags around the key verse
 def format_search_answer_lesson(lesson, lesson_type):
     if not lesson:
         return f"Sorry, no '{lesson_type}' lesson is available for this week."
@@ -205,8 +210,11 @@ def format_search_answer_lesson(lesson, lesson_type):
         message += f"📜 *Supplemental Scripture:*\n_{supplemental}_\n\n"
     if resource:
         message += f"📦 *Resource Material:*\n_{resource}_\n\n"
+        
     if memory_verse:
+        message += "<no_translate>\n"
         message += f"🔑 *Key Verse:*\n_{memory_verse}_\n\n"
+        message += "</no_translate>"
 
     message += "----------\n\n"
 
@@ -231,23 +239,30 @@ def get_ai_response(question, context):
         print(f"Google Gemini API Error: {e}")
         return "I'm having a little trouble thinking right now. Please try again in a moment."
 
+# MODIFIED: Updated prompt and added cleanup step
 def get_ai_translation(text_to_translate, target_language):
-    """Translates text using the Gemini API, preserving markdown."""
+    """Translates text using the Gemini API, preserving markdown and ignoring tagged sections."""
     if not gemini_model:
         return "Sorry, the translation module is currently unavailable."
     
     prompt = (
         f"You are a professional translator. Translate the following text into {target_language}. "
         "It is very important that you preserve the original formatting, including WhatsApp markdown like "
-        "asterisks for *bold* and underscores for _italics_. Do not add any extra commentary or introductory phrases. "
-        "Just provide the direct translation.\n\n"
+        "asterisks for *bold* and underscores for _italics_. "
+        "Crucially, if you see any text wrapped in `<no_translate>` and `</no_translate>` tags, "
+        "you MUST NOT translate the content inside those tags. Instead, reproduce that content and the tags "
+        "exactly as they appear in the original text. "
+        "Do not add any extra commentary or introductory phrases. Just provide the direct translation.\n\n"
         "--- TEXT TO TRANSLATE ---\n"
         f"{text_to_translate}"
     )
     
     try:
         response = gemini_model.generate_content(prompt)
-        return response.text.strip()
+        # Clean up the tags from the final response
+        translated_text = response.text.strip()
+        cleaned_translation = translated_text.replace("<no_translate>", "").replace("</no_translate>", "")
+        return cleaned_translation.strip()
     except Exception as e:
         print(f"Google Gemini API Translation Error: {e}")
         return f"I'm having trouble translating to {target_language} right now. Please try again in a moment."
@@ -308,7 +323,6 @@ def handle_bot_logic(user_id, message_text):
                 if not context: send_whatsapp_message(user_id, "Sorry, I can't find this week's lesson material to answer questions about.")
                 else: ai_answer = get_ai_response(question, context); send_whatsapp_message(user_id, ai_answer)
         
-        # --- MODIFIED: Logic for 'translate' command now shows a menu ---
         elif message_text_lower == 'translate':
             if 'last_lesson_content' in user_profile:
                 user_profile['mode'] = 'awaiting_translation_language'
@@ -343,7 +357,6 @@ def handle_bot_logic(user_id, message_text):
         else: 
             send_whatsapp_message(user_id, "In *Lessons* section: type `lesson`, `ask [question]`, `translate`, or `reset`.")
 
-    # --- NEW: Logic for handling language selection ---
     elif user_profile.get('mode') == 'awaiting_translation_language':
         if message_text_lower in LANGUAGES:
             target_language = LANGUAGES[message_text_lower]
@@ -351,13 +364,12 @@ def handle_bot_logic(user_id, message_text):
             
             if not content_to_translate:
                 send_whatsapp_message(user_id, "Something went wrong. Please type `lesson` to get the lesson again.")
-                user_profile['mode'] = 'lessons' # Reset mode
+                user_profile['mode'] = 'lessons'
             else:
                 send_whatsapp_message(user_id, f"Translating to {target_language}...")
                 translated_text = get_ai_translation(content_to_translate, target_language)
                 send_whatsapp_message(user_id, translated_text)
                 
-                # Clean up and reset mode after successful translation
                 user_profile['mode'] = 'lessons'
                 if 'last_lesson_content' in user_profile:
                     del user_profile['last_lesson_content']
