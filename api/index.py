@@ -58,19 +58,19 @@ def get_verse_from_db(passage, db_filename):
         conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
         cursor = conn.cursor()
         
-        # !!! IMPORTANT !!!
-        # Adjust table name 'verses' and column names if your DB schema is different.
+        # FIX: Updated table name from 'verses' to 'bible_verses' to match your schema.
+        
         if range_match:
             book_name, chapter, start_verse, end_verse = range_match.groups()
-            query = "SELECT verse, text FROM verses WHERE book_name LIKE ? AND chapter = ? AND verse >= ? AND verse <= ? ORDER BY verse"
+            query = "SELECT verse, text FROM bible_verses WHERE book_name_text LIKE ? AND chapter = ? AND verse >= ? AND verse <= ? ORDER BY verse"
             params = (f'%{book_name.strip()}%', chapter, start_verse, end_verse)
         elif single_match:
             book_name, chapter, verse = single_match.groups()
-            query = "SELECT verse, text FROM verses WHERE book_name LIKE ? AND chapter = ? AND verse = ?"
+            query = "SELECT verse, text FROM bible_verses WHERE book_name_text LIKE ? AND chapter = ? AND verse = ?"
             params = (f'%{book_name.strip()}%', chapter, verse)
         elif chapter_match:
             book_name, chapter = chapter_match.groups()
-            query = "SELECT verse, text FROM verses WHERE book_name LIKE ? AND chapter = ? ORDER BY verse"
+            query = "SELECT verse, text FROM bible_verses WHERE book_name_text LIKE ? AND chapter = ? ORDER BY verse"
             params = (f'%{book_name.strip()}%', chapter)
         else:
             return f"Sorry, I could not understand the reference '{passage}'. Please use a format like 'John 3:16', 'Genesis 1:1-5', or 'Psalm 23'."
@@ -97,7 +97,7 @@ def load_json_data(file_path):
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return [] if 'lessons' in file_path or 'hymn' in file_path else {}
+        return [] if any(x in file_path for x in ['lessons', 'hymn']) else {}
 
 def save_json_data(data, file_path):
     with open(file_path, 'w', encoding='utf-8') as f:
@@ -119,15 +119,12 @@ def format_hymn(hymn):
     chorus = hymn.get('chorus', [])
     parts = hymn.get('parts', [])
     if verses:
-        for i, verse_lines in enumerate(verses, 1):
-            message += f"*{i}.*\n" + "\n".join(verse_lines) + "\n\n"
-    if chorus:
-        message += "*Chorus:*\n" + "\n".join(chorus) + "\n\n"
+        for i, verse_lines in enumerate(verses, 1): message += f"*{i}.*\n" + "\n".join(verse_lines) + "\n\n"
+    if chorus: message += "*Chorus:*\n" + "\n".join(chorus) + "\n\n"
     if parts:
         for part in parts:
             message += f"*Part {part['part']}*\n"
-            for v_lines in part['verses']:
-                message += "\n".join(v_lines) + "\n\n"
+            for v_lines in part['verses']: message += "\n".join(v_lines) + "\n\n"
     return message.strip()
 
 def format_beginners_lesson(lesson):
@@ -137,8 +134,7 @@ def format_beginners_lesson(lesson):
     bible_refs = ', '.join(bible_refs_list) if bible_refs_list else "N/A"
     message = f"🖍️ *Beginners Lesson: {title}*\n\n_(Story from: {bible_refs})_\n\n"
     for section in lesson.get('lessonSections', []):
-        if section.get('sectionType') == 'text':
-            message += f"{section.get('sectionContent', 'No story available.')}\n\n"
+        if section.get('sectionType') == 'text': message += f"{section.get('sectionContent', 'No story available.')}\n\n"
     message += "Have a blessed week! ☀️"
     return message
 
@@ -186,20 +182,17 @@ def handle_bot_logic(user_id, message_text):
         if message_text_lower == '1':
             user_profile['mode'] = 'lessons'
             class_menu = "Please select your Sunday School class:\n\n"
-            for k, v in CLASSES.items():
-                class_menu += f"*{k}.* {v}\n"
+            for k, v in CLASSES.items(): class_menu += f"*{k}.* {v}\n"
             send_whatsapp_message(user_id, class_menu.strip())
         elif message_text_lower == '2':
             user_profile['mode'] = 'hymnbook'
             hymnbook_menu = "Please select your preferred hymnbook:\n\n"
-            for k, b in HYMNBOOKS.items():
-                hymnbook_menu += f"*{k}.* {b['name']}\n"
+            for k, b in HYMNBOOKS.items(): hymnbook_menu += f"*{k}.* {b['name']}\n"
             send_whatsapp_message(user_id, hymnbook_menu.strip())
         elif message_text_lower == '3':
             user_profile['mode'] = 'bible'
             bible_menu = "Please select a Bible version:\n\n"
-            for k, b in BIBLES.items():
-                bible_menu += f"*{k}.* {b['name']}\n"
+            for k, b in BIBLES.items(): bible_menu += f"*{k}.* {b['name']}\n"
             send_whatsapp_message(user_id, bible_menu.strip())
         else:
             send_whatsapp_message(user_id, "Welcome! 🙏\n\nPlease choose a section:\n\n*1.* Weekly Lessons\n*2.* Hymnbook\n*3.* Bible Lookup")
@@ -207,83 +200,57 @@ def handle_bot_logic(user_id, message_text):
     elif user_profile.get('mode') == 'lessons':
         if 'class' not in user_profile:
             if message_text_lower in CLASSES:
-                class_name = CLASSES[message_text_lower]
-                user_profile['class'] = class_name
+                class_name = CLASSES[message_text_lower]; user_profile['class'] = class_name
                 send_whatsapp_message(user_id, f"Great! Class set to *{class_name}*.\n\nType `lesson` or `ask [your question]`.\nType `reset` to go back.")
-            else:
-                send_whatsapp_message(user_id, "Invalid class number. Please try again.")
+            else: send_whatsapp_message(user_id, "Invalid class number. Please try again.")
         elif message_text_lower.startswith('ask '):
             question = message_text[4:].strip()
-            if not question:
-                send_whatsapp_message(user_id, "Please type a question after the word `ask`.")
+            if not question: send_whatsapp_message(user_id, "Please type a question after the word `ask`.")
             else:
                 send_whatsapp_message(user_id, "🤔 Thinking...")
-                lesson_index = get_current_lesson_index()
-                user_class = user_profile['class']
-                context = ""
+                lesson_index = get_current_lesson_index(); user_class = user_profile['class']; context = ""
                 lesson_files = {"Beginners": LESSONS_FILE_BEGINNERS, "Answer": LESSONS_FILE_ANSWER, "Search": LESSONS_FILE_SEARCH}
                 lesson_file_name = lesson_files.get(user_class)
                 if lesson_file_name:
                     lessons_path = os.path.join(os.path.dirname(__file__), lesson_file_name)
                     lessons_data = load_json_data(lessons_path)
-                    if lessons_data and 0 <= lesson_index < len(lessons_data):
-                        context = json.dumps(lessons_data[lesson_index])
-                if not context:
-                    send_whatsapp_message(user_id, "Sorry, I can't find this week's lesson material to answer questions about.")
-                else:
-                    ai_answer = get_ai_response(question, context)
-                    send_whatsapp_message(user_id, ai_answer)
+                    if lessons_data and 0 <= lesson_index < len(lessons_data): context = json.dumps(lessons_data[lesson_index])
+                if not context: send_whatsapp_message(user_id, "Sorry, I can't find this week's lesson material to answer questions about.")
+                else: ai_answer = get_ai_response(question, context); send_whatsapp_message(user_id, ai_answer)
         elif message_text_lower == 'lesson':
             send_whatsapp_message(user_id, "Fetching this week's lesson...")
-            lesson_index = get_current_lesson_index()
-            user_class = user_profile.get('class')
-            if lesson_index < 0:
-                send_whatsapp_message(user_id, "It seems there are no lessons scheduled for this week.")
+            lesson_index = get_current_lesson_index(); user_class = user_profile.get('class')
+            if lesson_index < 0: send_whatsapp_message(user_id, "It seems there are no lessons scheduled for this week.")
             else:
                 lesson_files = {"Beginners": LESSONS_FILE_BEGINNERS, "Answer": LESSONS_FILE_ANSWER, "Search": LESSONS_FILE_SEARCH}
                 lesson_file_name = lesson_files.get(user_class)
-                if not lesson_file_name:
-                    send_whatsapp_message(user_id, f"Sorry, lessons for the '{user_class}' class are not available yet.")
+                if not lesson_file_name: send_whatsapp_message(user_id, f"Sorry, lessons for the '{user_class}' class are not available yet.")
                 else:
                     lessons_path = os.path.join(os.path.dirname(__file__), lesson_file_name)
                     lessons_data = load_json_data(lessons_path)
                     if lessons_data and 0 <= lesson_index < len(lessons_data):
-                        lesson = lessons_data[lesson_index]
-                        formatted_message = ""
-                        if user_class == "Beginners":
-                            formatted_message = format_beginners_lesson(lesson)
-                        elif user_class in ["Search", "Answer"]:
-                            formatted_message = format_search_answer_lesson(lesson, user_class)
-                        else:
-                            formatted_message = f"Sorry, I don't know how to format the lesson for the '{user_class}' class yet."
+                        lesson = lessons_data[lesson_index]; formatted_message = ""
+                        if user_class == "Beginners": formatted_message = format_beginners_lesson(lesson)
+                        elif user_class in ["Search", "Answer"]: formatted_message = format_search_answer_lesson(lesson, user_class)
+                        else: formatted_message = f"Sorry, I don't know how to format the lesson for the '{user_class}' class yet."
                         send_whatsapp_message(user_id, formatted_message)
-                    else:
-                        send_whatsapp_message(user_id, "Sorry, I couldn't find this week's lesson. It might not be uploaded yet.")
-        else:
-            send_whatsapp_message(user_id, "In *Lessons* section: type `lesson`, `ask [question]`, or `reset`.")
+                    else: send_whatsapp_message(user_id, "Sorry, I couldn't find this week's lesson. It might not be uploaded yet.")
+        else: send_whatsapp_message(user_id, "In *Lessons* section: type `lesson`, `ask [question]`, or `reset`.")
 
     elif user_profile.get('mode') == 'hymnbook':
         if 'hymnbook' not in user_profile:
             if message_text_lower in HYMNBOOKS:
-                selected_hymnbook = HYMNBOOKS[message_text_lower]
-                user_profile['hymnbook'] = selected_hymnbook['file']
+                selected_hymnbook = HYMNBOOKS[message_text_lower]; user_profile['hymnbook'] = selected_hymnbook['file']
                 send_whatsapp_message(user_id, f"You have selected *{selected_hymnbook['name']}*.\n\nPlease type a hymn number, or `reset` to start over.")
-            else:
-                send_whatsapp_message(user_id, "Invalid selection. Please choose a hymnbook from the list.")
+            else: send_whatsapp_message(user_id, "Invalid selection. Please choose a hymnbook from the list.")
         else:
             if message_text.isdigit():
-                hymn_number_to_find = int(message_text)
-                hymnbook_file = user_profile['hymnbook']
-                hymns_path = os.path.join(os.path.dirname(__file__), HYMNBOOKS_DIR, hymnbook_file)
-                hymns_data = load_json_data(hymns_path)
+                hymn_number_to_find = int(message_text); hymnbook_file = user_profile['hymnbook']
+                hymns_path = os.path.join(os.path.dirname(__file__), HYMNBOOKS_DIR, hymnbook_file); hymns_data = load_json_data(hymns_path)
                 found_hymn = next((hymn for hymn in hymns_data if hymn.get('number') == hymn_number_to_find), None)
-                if found_hymn:
-                    formatted_hymn = format_hymn(found_hymn)
-                    send_whatsapp_message(user_id, formatted_hymn)
-                else:
-                    send_whatsapp_message(user_id, f"Sorry, I couldn't find hymn #{hymn_number_to_find} in that hymnbook.")
-            else:
-                send_whatsapp_message(user_id, "Please type a valid hymn number, or `reset` to start over.")
+                if found_hymn: formatted_hymn = format_hymn(found_hymn); send_whatsapp_message(user_id, formatted_hymn)
+                else: send_whatsapp_message(user_id, f"Sorry, I couldn't find hymn #{hymn_number_to_find} in that hymnbook.")
+            else: send_whatsapp_message(user_id, "Please type a valid hymn number, or `reset` to start over.")
 
     elif user_profile.get('mode') == 'bible':
         if 'bible_version_file' not in user_profile:
