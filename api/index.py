@@ -3,18 +3,22 @@
 import os
 import json
 import requests
-from groq import Groq
+import google.generativeai as genai  # <-- NEW: Import Google Gemini
 from flask import Flask, request
 from datetime import date
 from dateutil.relativedelta import relativedelta, MO
 
-# --- 1. INITIALIZE FLASK & GROQ CLIENT ---
+# --- 1. INITIALIZE FLASK & GEMINI CLIENT ---
 app = Flask(__name__)
+# --- NEW: Initialize Google Gemini client ---
 try:
-    groq_client = Groq()
+    # The client will automatically use the GEMINI_API_KEY environment variable.
+    gemini_api_key = os.environ.get('GEMINI_API_KEY')
+    genai.configure(api_key=gemini_api_key)
+    gemini_model = genai.GenerativeModel('gemini-1.5-pro')
 except Exception as e:
-    print(f"Error initializing Groq client: {e}")
-    groq_client = None
+    print(f"Error initializing Google Gemini client: {e}")
+    gemini_model = None
 
 # --- 2. CONFIGURATION & ENVIRONMENT VARIABLES ---
 VERIFY_TOKEN = os.environ.get('VERIFY_TOKEN')
@@ -27,17 +31,16 @@ LESSONS_FILE_SEARCH = 'search_lessons.json'
 LESSONS_FILE_ANSWER = 'answer_lessons.json'
 LESSONS_FILE_BEGINNERS = 'beginners_lessons.json'
 USERS_FILE = 'users.json'
-HYMNBOOKS_DIR = 'hymnbooks'  # Directory for hymnbooks
+HYMNBOOKS_DIR = 'hymnbooks'
 
 CLASSES = { "1": "Beginners", "2": "Primary Pals", "3": "Answer", "4": "Search" }
-# UPDATED HYMNBOOKS DICTIONARY
 HYMNBOOKS = {
     "1": {"name": "Nziyo Dzekurumbidza (Shona Hymns)", "file": "shona_hymns.json"},
     "2": {"name": "Great Hymns of Faith (English)", "file": "english_hymns.json"}
 }
 
 # --- 3. HELPER & FORMATTING FUNCTIONS ---
-
+# ... (All other helper functions like format_hymn, format_lesson, etc. remain the same) ...
 def get_user_file_path():
     return f'/tmp/{USERS_FILE}' if 'VERCEL' in os.environ else os.path.join(os.path.dirname(__file__), USERS_FILE)
 
@@ -92,8 +95,7 @@ def format_beginners_lesson(lesson):
     return message
 
 def format_search_answer_lesson(lesson, lesson_type):
-    if not lesson:
-        return f"Sorry, no '{lesson_type}' lesson is available for this week."
+    if not lesson: return f"Sorry, no '{lesson_type}' lesson is available for this week."
     title = lesson.get('lessonTitle', 'N/A')
     memory_verse = lesson.get('keyVerse', 'N/A')
     message = f"📚 *{lesson_type} Lesson: {title}*\n\n"
@@ -107,22 +109,31 @@ def format_search_answer_lesson(lesson, lesson_type):
     message += "Have a blessed week! ✨"
     return message.strip()
 
+
+# --- NEW AI "THINKING" FUNCTION using Google Gemini ---
 def get_ai_response(question, context):
-    if not groq_client:
+    if not gemini_model:
         return "Sorry, the AI thinking module is currently unavailable."
-    system_prompt = "You are a friendly and helpful Sunday School assistant. Your answers must be based *only* on the provided lesson text (the context). If the answer is not in the text, say that you cannot answer based on the provided material. Keep your answers concise and easy to understand."
-    user_prompt = f"Based on the following lesson context, please answer the user's question.\n\n--- LESSON CONTEXT ---\n{context}\n\n--- USER QUESTION ---\n{question}"
+    
+    # Constructing the prompt for Gemini
+    prompt = (
+        "You are a friendly and helpful Sunday School assistant. "
+        "Your answers must be based *only* on the provided lesson text (the context). "
+        "If the answer is not in the text, say that you cannot answer based on the provided material. "
+        "Keep your answers concise and easy to understand.\n\n"
+        f"--- LESSON CONTEXT ---\n{context}\n\n"
+        f"--- USER QUESTION ---\n{question}"
+    )
+
     try:
-        completion = groq_client.chat.completions.create(
-            model="llama3-8b-8192",
-            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-            temperature=0.3, max_tokens=250)
-        return completion.choices[0].message.content.strip()
+        # Generate content using the Gemini model
+        response = gemini_model.generate_content(prompt)
+        return response.text.strip()
     except Exception as e:
-        print(f"Groq API Error: {e}")
+        print(f"Google Gemini API Error: {e}")
         return "I'm having a little trouble thinking right now. Please try again in a moment."
 
-# --- MAIN BOT LOGIC HANDLER ---
+# --- MAIN BOT LOGIC HANDLER (Unchanged except for the AI function call) ---
 def handle_bot_logic(user_id, message_text):
     user_file = get_user_file_path()
     users = load_json_data(user_file)
@@ -133,17 +144,18 @@ def handle_bot_logic(user_id, message_text):
     if message_text_lower == 'reset':
         user_profile = {}
         send_whatsapp_message(user_id, "Your session has been reset. Welcome! 🙏\n\nPlease choose a section:\n\n*1.* Weekly Lessons\n*2.* Hymnbook")
-        users.pop(user_id, None) # Remove the user's old profile
+        if user_id in users:
+            del users[user_id]
         save_json_data(users, user_file)
         return
 
     if 'mode' not in user_profile:
         if message_text_lower == '1':
             user_profile['mode'] = 'lessons'
-            hymnbook_menu = "Please select your Sunday School class:\n\n"
+            class_menu = "Please select your Sunday School class:\n\n"
             for k, v in CLASSES.items():
-                hymnbook_menu += f"*{k}.* {v}\n"
-            send_whatsapp_message(user_id, hymnbook_menu.strip())
+                class_menu += f"*{k}.* {v}\n"
+            send_whatsapp_message(user_id, class_menu.strip())
         elif message_text_lower == '2':
             user_profile['mode'] = 'hymnbook'
             hymnbook_menu = "Please select your preferred hymnbook:\n\n"
@@ -152,9 +164,9 @@ def handle_bot_logic(user_id, message_text):
             send_whatsapp_message(user_id, hymnbook_menu.strip())
         else:
             send_whatsapp_message(user_id, "Welcome! 🙏\n\nPlease choose a section:\n\n*1.* Weekly Lessons\n*2.* Hymnbook")
-
+    
     elif user_profile.get('mode') == 'lessons':
-        # ... [Lessons logic remains the same] ...
+        # ... (Lesson logic is unchanged) ...
         if 'class' not in user_profile:
             if message_text_lower in CLASSES:
                 class_name = CLASSES[message_text_lower]
@@ -212,10 +224,9 @@ def handle_bot_logic(user_id, message_text):
         else:
             send_whatsapp_message(user_id, "In *Lessons* section: type `lesson`, `ask [question]`, or `reset`.")
 
-    # --- NEW, FULLY IMPLEMENTED HYMNBOOK LOGIC ---
     elif user_profile.get('mode') == 'hymnbook':
+        # ... (Hymnbook logic is unchanged) ...
         if 'hymnbook' not in user_profile:
-            # Stage 1: User needs to select a hymnbook
             if message_text_lower in HYMNBOOKS:
                 selected_hymnbook = HYMNBOOKS[message_text_lower]
                 user_profile['hymnbook'] = selected_hymnbook['file']
@@ -223,22 +234,17 @@ def handle_bot_logic(user_id, message_text):
             else:
                 send_whatsapp_message(user_id, "Invalid selection. Please choose a hymnbook from the list.")
         else:
-            # Stage 2: User has selected a hymnbook and is now requesting a hymn number
             if message_text.isdigit():
                 hymn_number_to_find = int(message_text)
                 hymnbook_file = user_profile['hymnbook']
-                
-                # Construct the full path to the hymnbook file
                 hymns_path = os.path.join(os.path.dirname(__file__), HYMNBOOKS_DIR, hymnbook_file)
                 hymns_data = load_json_data(hymns_path)
-                
                 found_hymn = None
                 if hymns_data:
                     for hymn in hymns_data:
                         if hymn.get('number') == hymn_number_to_find:
                             found_hymn = hymn
                             break
-                
                 if found_hymn:
                     formatted_hymn = format_hymn(found_hymn)
                     send_whatsapp_message(user_id, formatted_hymn)
@@ -246,7 +252,7 @@ def handle_bot_logic(user_id, message_text):
                     send_whatsapp_message(user_id, f"Sorry, I couldn't find hymn #{hymn_number_to_find} in that hymnbook.")
             else:
                 send_whatsapp_message(user_id, "Please type a valid hymn number, or `reset` to start over.")
-
+    
     if json.dumps(user_profile) != original_profile_state:
         users[user_id] = user_profile
         save_json_data(users, user_file)
@@ -289,4 +295,4 @@ def whatsapp_webhook():
 
 @app.route('/')
 def health_check():
-    return "SundayBot AI (Groq) is running!", 200
+    return "SundayBot AI (Gemini) is running!", 200
