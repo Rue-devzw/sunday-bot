@@ -4,6 +4,8 @@ import os
 import json
 import requests
 import google.generativeai as genai
+import sqlite3
+import re
 from flask import Flask, request
 from datetime import date
 from dateutil.relativedelta import relativedelta, MO
@@ -14,11 +16,9 @@ try:
     gemini_api_key = os.environ.get('GEMINI_API_KEY')
     genai.configure(api_key=gemini_api_key)
     gemini_model = genai.GenerativeModel('gemini-1.5-flash')
-    BIBLE_API_KEY = os.environ.get('BIBLE_API_KEY')
 except Exception as e:
-    print(f"Error initializing API clients: {e}")
+    print(f"Error initializing Gemini client: {e}")
     gemini_model = None
-    BIBLE_API_KEY = None
 
 # --- 2. CONFIGURATION & ENVIRONMENT VARIABLES ---
 VERIFY_TOKEN = os.environ.get('VERIFY_TOKEN')
@@ -26,54 +26,67 @@ WHATSAPP_TOKEN = os.environ.get('WHATSAPP_TOKEN')
 PHONE_NUMBER_ID = os.environ.get('PHONE_NUMBER_ID')
 
 ANCHOR_DATE = date(2024, 8, 21)
+USERS_FILE = 'users.json'
+HYMNBOOKS_DIR = 'hymnbooks'
+BIBLES_DIR = 'bibles'
 LESSONS_FILE_SEARCH = 'search_lessons.json'
 LESSONS_FILE_ANSWER = 'answer_lessons.json'
 LESSONS_FILE_BEGINNERS = 'beginners_lessons.json'
-USERS_FILE = 'users.json'
-HYMNBOOKS_DIR = 'hymnbooks'
-BIBLE_ID = 'de4e12af7f28f599-01' # King James Version
 
 CLASSES = { "1": "Beginners", "2": "Primary Pals", "3": "Answer", "4": "Search" }
 HYMNBOOKS = {
     "1": {"name": "Nziyo Dzekurumbidza (Shona Hymns)", "file": "shona_hymns.json"},
     "2": {"name": "Great Hymns of Faith (English)", "file": "english_hymns.json"}
 }
+BIBLES = {
+    "1": {"name": "Shona Bible", "file": "shona_bible.db"},
+    "2": {"name": "English Bible (KJV)", "file": "english_bible.db"}
+}
 
 # --- 3. HELPER & FORMATTING FUNCTIONS ---
 
-def get_bible_verse(passage):
-    if not BIBLE_API_KEY:
-        return "Sorry, the Bible lookup feature is not configured."
+def get_verse_from_db(passage, db_filename):
+    db_path = os.path.join(os.path.dirname(__file__), BIBLES_DIR, db_filename)
+    if not os.path.exists(db_path):
+        return f"Sorry, the selected Bible database file ({db_filename}) is missing."
 
-    api_url = f'https://api.scripture.api.bible/v1/bibles/{BIBLE_ID}/passages'
-    headers = {'api-key': BIBLE_API_KEY}
-    params = {
-        'q': passage,
-        'content-type': 'text',
-        'include-verse-numbers': 'true'
-    }
+    range_match = re.match(r'(.+?)\s*(\d+):(\d+)-(\d+)', passage, re.IGNORECASE)
+    single_match = re.match(r'(.+?)\s*(\d+):(\d+)', passage, re.IGNORECASE)
+    chapter_match = re.match(r'(.+?)\s*(\d+)$', passage, re.IGNORECASE)
 
     try:
-        response = requests.get(api_url, headers=headers, params=params)
-        response.raise_for_status()
-        data = response.json()
+        conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
+        cursor = conn.cursor()
         
-        if not data.get('data'):
-             return f"Sorry, I couldn't find the passage '{passage}'. Please check the reference (e.g., 'John 3:16')."
-
-        content = data['data']['content']
-        reference = data['data']['reference']
-        
-        return f"📖 *{reference}* (KJV)\n\n{content.strip()}"
-
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 404:
-            return f"Sorry, I couldn't find the passage '{passage}'. Please make sure the book and chapter are correct."
+        # !!! IMPORTANT !!!
+        # Adjust table name 'verses' and column names if your DB schema is different.
+        if range_match:
+            book_name, chapter, start_verse, end_verse = range_match.groups()
+            query = "SELECT verse, text FROM verses WHERE book_name LIKE ? AND chapter = ? AND verse >= ? AND verse <= ? ORDER BY verse"
+            params = (f'%{book_name.strip()}%', chapter, start_verse, end_verse)
+        elif single_match:
+            book_name, chapter, verse = single_match.groups()
+            query = "SELECT verse, text FROM verses WHERE book_name LIKE ? AND chapter = ? AND verse = ?"
+            params = (f'%{book_name.strip()}%', chapter, verse)
+        elif chapter_match:
+            book_name, chapter = chapter_match.groups()
+            query = "SELECT verse, text FROM verses WHERE book_name LIKE ? AND chapter = ? ORDER BY verse"
+            params = (f'%{book_name.strip()}%', chapter)
         else:
-            print(f"API.Bible HTTP Error: {e}")
-            return "Sorry, there was an error fetching the Bible verse."
+            return f"Sorry, I could not understand the reference '{passage}'. Please use a format like 'John 3:16', 'Genesis 1:1-5', or 'Psalm 23'."
+
+        cursor.execute(query, params)
+        results = cursor.fetchall()
+        conn.close()
+
+        if not results:
+            return f"Sorry, I couldn't find the passage '{passage}'. Please check the reference."
+
+        full_text = "".join([f"[{v[0]}] {v[1]} " for v in results])
+        return f"📖 *{passage.strip()}*\n\n{full_text.strip()}"
+
     except Exception as e:
-        print(f"API.Bible Error: {e}")
+        print(f"SQLite Database Error: {e}")
         return "Sorry, I'm having trouble looking up the Bible verse right now."
 
 def get_user_file_path():
@@ -154,6 +167,7 @@ def get_ai_response(question, context):
         print(f"Google Gemini API Error: {e}")
         return "I'm having a little trouble thinking right now. Please try again in a moment."
 
+# --- MAIN BOT LOGIC HANDLER ---
 def handle_bot_logic(user_id, message_text):
     user_file = get_user_file_path()
     users = load_json_data(user_file)
@@ -183,7 +197,10 @@ def handle_bot_logic(user_id, message_text):
             send_whatsapp_message(user_id, hymnbook_menu.strip())
         elif message_text_lower == '3':
             user_profile['mode'] = 'bible'
-            send_whatsapp_message(user_id, "You're in *Bible Lookup* mode.\n\nPlease type a verse reference (e.g., `John 3:16` or `Romans 8:28-30`).\n\nType `reset` to go back to the main menu.")
+            bible_menu = "Please select a Bible version:\n\n"
+            for k, b in BIBLES.items():
+                bible_menu += f"*{k}.* {b['name']}\n"
+            send_whatsapp_message(user_id, bible_menu.strip())
         else:
             send_whatsapp_message(user_id, "Welcome! 🙏\n\nPlease choose a section:\n\n*1.* Weekly Lessons\n*2.* Hymnbook\n*3.* Bible Lookup")
     
@@ -202,7 +219,7 @@ def handle_bot_logic(user_id, message_text):
             else:
                 send_whatsapp_message(user_id, "🤔 Thinking...")
                 lesson_index = get_current_lesson_index()
-                user_class = user_profile.get('class')
+                user_class = user_profile['class']
                 context = ""
                 lesson_files = {"Beginners": LESSONS_FILE_BEGINNERS, "Answer": LESSONS_FILE_ANSWER, "Search": LESSONS_FILE_SEARCH}
                 lesson_file_name = lesson_files.get(user_class)
@@ -269,10 +286,19 @@ def handle_bot_logic(user_id, message_text):
                 send_whatsapp_message(user_id, "Please type a valid hymn number, or `reset` to start over.")
 
     elif user_profile.get('mode') == 'bible':
-        passage_text = message_text.strip()
-        send_whatsapp_message(user_id, f"Looking up *{passage_text}*...")
-        verse_response = get_bible_verse(passage_text)
-        send_whatsapp_message(user_id, verse_response)
+        if 'bible_version_file' not in user_profile:
+            if message_text_lower in BIBLES:
+                selected_bible = BIBLES[message_text_lower]
+                user_profile['bible_version_file'] = selected_bible['file']
+                send_whatsapp_message(user_id, f"You have selected *{selected_bible['name']}*.\n\nPlease type a verse reference (e.g., `John 3:16`).\nType `reset` to start over.")
+            else:
+                send_whatsapp_message(user_id, "Invalid selection. Please choose a Bible version from the list.")
+        else:
+            passage_text = message_text.strip()
+            db_filename = user_profile['bible_version_file']
+            send_whatsapp_message(user_id, f"Looking up *{passage_text}*...")
+            verse_response = get_verse_from_db(passage_text, db_filename)
+            send_whatsapp_message(user_id, verse_response)
 
     if json.dumps(user_profile) != original_profile_state:
         users[user_id] = user_profile
@@ -315,4 +341,4 @@ def whatsapp_webhook():
 
 @app.route('/')
 def health_check():
-    return "SundayBot AI (Gemini 1.5 Flash) with Bible is running!", 200
+    return "SundayBot with Local Bible DBs is running!", 200
