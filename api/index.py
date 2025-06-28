@@ -134,7 +134,7 @@ def format_hymn(hymn):
             for v_lines in part['verses']: message += "\n".join(v_lines) + "\n\n"
     return message.strip()
 
-# MODIFIED: Added <no_translate> tags around the key verse
+# FIX: Removed <no_translate> tags from user-facing messages
 def format_beginners_lesson(lesson):
     if not lesson:
         return "Sorry, no 'Beginners' lesson is available for this week."
@@ -153,11 +153,8 @@ def format_beginners_lesson(lesson):
     message = f"🖍️ *Beginners Lesson{lesson_number}: {title}*\n\n"
     if bible_refs != "N/A":
         message += f"📖 *Story from:*\n_{bible_refs}_\n\n"
-    
     if memory_verse:
-        message += "<no_translate>\n"
         message += f"🔑 *Key Verse:*\n_{memory_verse}_\n\n"
-        message += "</no_translate>"
     
     message += "----------\n\n"
 
@@ -178,7 +175,7 @@ def format_beginners_lesson(lesson):
     
     return message.strip()
 
-# MODIFIED: Added <no_translate> tags around the key verse
+# FIX: Removed <no_translate> tags from user-facing messages
 def format_search_answer_lesson(lesson, lesson_type):
     if not lesson:
         return f"Sorry, no '{lesson_type}' lesson is available for this week."
@@ -212,9 +209,7 @@ def format_search_answer_lesson(lesson, lesson_type):
         message += f"📦 *Resource Material:*\n_{resource}_\n\n"
         
     if memory_verse:
-        message += "<no_translate>\n"
         message += f"🔑 *Key Verse:*\n_{memory_verse}_\n\n"
-        message += "</no_translate>"
 
     message += "----------\n\n"
 
@@ -239,30 +234,46 @@ def get_ai_response(question, context):
         print(f"Google Gemini API Error: {e}")
         return "I'm having a little trouble thinking right now. Please try again in a moment."
 
-# MODIFIED: Updated prompt and added cleanup step
+# --- MODIFIED: get_ai_translation uses programmatic extraction ---
 def get_ai_translation(text_to_translate, target_language):
-    """Translates text using the Gemini API, preserving markdown and ignoring tagged sections."""
+    """Programmatically extracts the Key Verse, translates the rest, and re-inserts it."""
     if not gemini_model:
         return "Sorry, the translation module is currently unavailable."
+
+    key_verse_block = ""
+    text_for_translation = text_to_translate
+    placeholder = "[KEY_VERSE_PLACEHOLDER]"
+
+    # Find and extract the Key Verse block using a reliable pattern
+    # The pattern looks for the Key Verse emoji and title, and captures everything until the next double newline.
+    key_verse_pattern = re.compile(r"(🔑 \*Key Verse:\*.*?\n\n)", re.DOTALL)
+    match = key_verse_pattern.search(text_to_translate)
     
+    if match:
+        key_verse_block = match.group(1)
+        # Replace the found block with our placeholder for the AI
+        text_for_translation = text_to_translate.replace(key_verse_block, placeholder)
+
     prompt = (
         f"You are a professional translator. Translate the following text into {target_language}. "
-        "It is very important that you preserve the original formatting, including WhatsApp markdown like "
-        "asterisks for *bold* and underscores for _italics_. "
-        "Crucially, if you see any text wrapped in `<no_translate>` and `</no_translate>` tags, "
-        "you MUST NOT translate the content inside those tags. Instead, reproduce that content and the tags "
-        "exactly as they appear in the original text. "
+        "Preserve the original formatting, including WhatsApp markdown like *bold* and _italics_. "
         "Do not add any extra commentary or introductory phrases. Just provide the direct translation.\n\n"
         "--- TEXT TO TRANSLATE ---\n"
-        f"{text_to_translate}"
+        f"{text_for_translation}"
     )
     
     try:
         response = gemini_model.generate_content(prompt)
-        # Clean up the tags from the final response
         translated_text = response.text.strip()
-        cleaned_translation = translated_text.replace("<no_translate>", "").replace("</no_translate>", "")
-        return cleaned_translation.strip()
+        
+        # If we used a placeholder, substitute it back with the original Key Verse
+        if key_verse_block:
+            final_translation = translated_text.replace(placeholder, key_verse_block)
+        else:
+            final_translation = translated_text
+            
+        return final_translation
+
     except Exception as e:
         print(f"Google Gemini API Translation Error: {e}")
         return f"I'm having trouble translating to {target_language} right now. Please try again in a moment."
