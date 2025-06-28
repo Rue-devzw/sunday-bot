@@ -125,8 +125,6 @@ def format_hymn(hymn):
             for v_lines in part['verses']: message += "\n".join(v_lines) + "\n\n"
     return message.strip()
 
-# --- NEW AND IMPROVED FORMATTING FUNCTIONS ---
-
 def format_beginners_lesson(lesson):
     if not lesson:
         return "Sorry, no 'Beginners' lesson is available for this week."
@@ -136,31 +134,17 @@ def format_beginners_lesson(lesson):
     lesson_number = f" {int(lesson_number_str)}" if lesson_number_str else ""
 
     title = lesson.get('lessonTitle', 'N/A')
-    memory_verse = lesson.get('keyVerse') # Check if it exists
+    memory_verse = lesson.get('keyVerse')
 
-    # Format Bible Reference
     raw_refs = lesson.get('bibleReference', [])
-    bible_refs_list = []
-    if raw_refs:
-        for ref in raw_refs:
-            book = ref.get('book')
-            chapter = ref.get('chapter')
-            verses = ref.get('verses')
-            if book and chapter and verses:
-                bible_refs_list.append(f"{book} {chapter}:{verses}")
-            elif book and chapter:
-                bible_refs_list.append(f"{book} {chapter}")
+    bible_refs_list = [f"{ref.get('book')} {ref.get('chapter')}" for ref in raw_refs if ref.get('book') and ref.get('chapter')]
     bible_refs = ', '.join(bible_refs_list) if bible_refs_list else "N/A"
 
-    # Build Message
     message = f"🖍️ *Beginners Lesson{lesson_number}: {title}*\n\n"
-
     if bible_refs != "N/A":
         message += f"📖 *Story from:*\n_{bible_refs}_\n\n"
-    
     if memory_verse:
         message += f"🔑 *Memory Verse:*\n_{memory_verse}_\n\n"
-
     message += "----------\n\n"
 
     has_content = False
@@ -176,7 +160,8 @@ def format_beginners_lesson(lesson):
         message += "No story content is available for this lesson.\n\n"
 
     message += "Have a blessed week! ☀️\n"
-    message += "_Type 'ask [your question]' or 'reset'_"
+    # MODIFIED: Added 'translate' to the prompt
+    message += "_Type 'ask [question]', 'translate', or 'reset'_"
     
     return message.strip()
 
@@ -193,32 +178,24 @@ def format_search_answer_lesson(lesson, lesson_type):
     supplemental = lesson.get('supplementalScripture')
     resource = lesson.get('resourceMaterial')
 
-    # Format Bible Reference
     raw_refs = lesson.get('bibleReference', [])
     bible_refs_list = []
     if raw_refs:
         for ref in raw_refs:
-            book = ref.get('book')
-            chapter = ref.get('chapter')
-            verses = ref.get('verses')
+            book, chapter, verses = ref.get('book'), ref.get('chapter'), ref.get('verses')
             if book and chapter and verses:
                 bible_refs_list.append(f"{book} {chapter}:{verses}")
             elif book and chapter:
                 bible_refs_list.append(f"{book} {chapter}")
     bible_refs = ', '.join(bible_refs_list) if bible_refs_list else "N/A"
 
-    # Build Message
     message = f"📚 *{lesson_type} Lesson{lesson_number}: {title}*\n\n"
-
     if bible_refs and bible_refs != 'N/A':
         message += f"📖 *Bible Reference:*\n_{bible_refs}_\n\n"
-    
     if supplemental:
         message += f"📜 *Supplemental Scripture:*\n_{supplemental}_\n\n"
-        
     if resource:
         message += f"📦 *Resource Material:*\n_{resource}_\n\n"
-
     if memory_verse:
         message += f"🔑 *Key Verse:*\n_{memory_verse}_\n\n"
 
@@ -231,11 +208,10 @@ def format_search_answer_lesson(lesson, lesson_type):
             message += f"📌 *{section_title}*\n{section_content}\n\n"
 
     message += "Have a blessed week! ✨\n"
-    message += "_Type 'ask [your question]' or 'reset'_"
+    # MODIFIED: Added 'translate' to the prompt
+    message += "_Type 'ask [question]', 'translate', or 'reset'_"
 
     return message.strip()
-
-# --- END OF NEW FORMATTING FUNCTIONS ---
 
 def get_ai_response(question, context):
     if not gemini_model: return "Sorry, the AI thinking module is currently unavailable."
@@ -246,6 +222,28 @@ def get_ai_response(question, context):
     except Exception as e:
         print(f"Google Gemini API Error: {e}")
         return "I'm having a little trouble thinking right now. Please try again in a moment."
+
+# --- NEW FUNCTION: get_ai_translation ---
+def get_ai_translation(text_to_translate, target_language="Shona"):
+    """Translates text using the Gemini API, preserving markdown."""
+    if not gemini_model:
+        return "Sorry, the translation module is currently unavailable."
+    
+    prompt = (
+        f"You are a professional translator. Translate the following text into {target_language}. "
+        "It is very important that you preserve the original formatting, including WhatsApp markdown like "
+        "asterisks for *bold* and underscores for _italics_. Do not add any extra commentary or introductory phrases. "
+        "Just provide the direct translation.\n\n"
+        "--- TEXT TO TRANSLATE ---\n"
+        f"{text_to_translate}"
+    )
+    
+    try:
+        response = gemini_model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        print(f"Google Gemini API Translation Error: {e}")
+        return f"I'm having trouble translating to {target_language} right now. Please try again in a moment."
 
 # --- MAIN BOT LOGIC HANDLER ---
 def handle_bot_logic(user_id, message_text):
@@ -284,8 +282,10 @@ def handle_bot_logic(user_id, message_text):
     elif user_profile.get('mode') == 'lessons':
         if 'class' not in user_profile:
             if message_text_lower in CLASSES:
-                class_name = CLASSES[message_text_lower]; user_profile['class'] = class_name
-                send_whatsapp_message(user_id, f"Great! Class set to *{class_name}*.\n\nType `lesson` to get this week's lesson, or `ask [your question]` to ask about it.\nType `reset` to go back.")
+                class_name = CLASSES[message_text_lower]
+                user_profile['class'] = class_name
+                # MODIFIED: Clearer instructions
+                send_whatsapp_message(user_id, f"Great! Class set to *{class_name}*.\n\nType `lesson` to get this week's lesson.\nType `reset` to go back.")
             else: send_whatsapp_message(user_id, "Invalid class number. Please try again.")
         elif message_text_lower.startswith('ask '):
             question = message_text[4:].strip()
@@ -301,6 +301,21 @@ def handle_bot_logic(user_id, message_text):
                     if lessons_data and 0 <= lesson_index < len(lessons_data): context = json.dumps(lessons_data[lesson_index])
                 if not context: send_whatsapp_message(user_id, "Sorry, I can't find this week's lesson material to answer questions about.")
                 else: ai_answer = get_ai_response(question, context); send_whatsapp_message(user_id, ai_answer)
+        
+        # --- NEW: LOGIC FOR TRANSLATION ---
+        elif message_text_lower == 'translate':
+            if 'last_lesson_content' in user_profile:
+                content_to_translate = user_profile['last_lesson_content']
+                # You can make the target language dynamic if needed, e.g., based on user settings.
+                target_language = "Shona" 
+                send_whatsapp_message(user_id, f"Translating to {target_language}...")
+                translated_text = get_ai_translation(content_to_translate, target_language)
+                send_whatsapp_message(user_id, translated_text)
+                # Clear the stored content after translation
+                del user_profile['last_lesson_content']
+            else:
+                send_whatsapp_message(user_id, "Please get a lesson first by typing `lesson`.")
+
         elif message_text_lower == 'lesson':
             send_whatsapp_message(user_id, "Fetching this week's lesson...")
             lesson_index = get_current_lesson_index(); user_class = user_profile.get('class')
@@ -313,15 +328,22 @@ def handle_bot_logic(user_id, message_text):
                     lessons_path = os.path.join(os.path.dirname(__file__), lesson_file_name)
                     lessons_data = load_json_data(lessons_path)
                     if lessons_data and 0 <= lesson_index < len(lessons_data):
-                        lesson = lessons_data[lesson_index]; formatted_message = ""
+                        lesson = lessons_data[lesson_index]
+                        formatted_message = ""
                         if user_class == "Beginners": formatted_message = format_beginners_lesson(lesson)
                         elif user_class in ["Search", "Answer", "Primary Pals"]: formatted_message = format_search_answer_lesson(lesson, user_class)
                         else: formatted_message = f"Sorry, I don't know how to format the lesson for the '{user_class}' class yet."
+                        
+                        # MODIFIED: Store the formatted lesson for potential translation
+                        user_profile['last_lesson_content'] = formatted_message
                         send_whatsapp_message(user_id, formatted_message)
                     else: send_whatsapp_message(user_id, "Sorry, I couldn't find this week's lesson. It might not be uploaded yet.")
-        else: send_whatsapp_message(user_id, "In *Lessons* section: type `lesson`, `ask [question]`, or `reset`.")
+        else: 
+            # MODIFIED: Updated help message
+            send_whatsapp_message(user_id, "In *Lessons* section: type `lesson`, `ask [question]`, `translate`, or `reset`.")
 
     elif user_profile.get('mode') == 'hymnbook':
+        # ... (no changes in this section)
         if 'hymnbook' not in user_profile:
             if message_text_lower in HYMNBOOKS:
                 selected_hymnbook = HYMNBOOKS[message_text_lower]; user_profile['hymnbook'] = selected_hymnbook['file']
@@ -337,6 +359,7 @@ def handle_bot_logic(user_id, message_text):
             else: send_whatsapp_message(user_id, "Please type a valid hymn number, or `reset` to start over.")
 
     elif user_profile.get('mode') == 'bible':
+        # ... (no changes in this section)
         if 'bible_version_file' not in user_profile:
             if message_text_lower in BIBLES:
                 selected_bible = BIBLES[message_text_lower]
@@ -392,4 +415,4 @@ def whatsapp_webhook():
 
 @app.route('/')
 def health_check():
-    return "SundayBot with Local Bible DBs is running!", 200
+    return "SundayBot with Translation is running!", 200
