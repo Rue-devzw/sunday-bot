@@ -15,7 +15,7 @@ try:
     # The client will automatically use the GEMINI_API_KEY environment variable.
     gemini_api_key = os.environ.get('GEMINI_API_KEY')
     genai.configure(api_key=gemini_api_key)
-    gemini_model = genai.GenerativeModel('gemini-1.5-pro')
+    gemini_model = genai.GenerativeModel('gemini-1.0-pro-vision-latest')
 except Exception as e:
     print(f"Error initializing Google Gemini client: {e}")
     gemini_model = None
