@@ -43,6 +43,16 @@ BIBLES = {
     "2": {"name": "English Bible (KJV)", "file": "english_bible.db"}
 }
 
+# --- NEW: LANGUAGES DICTIONARY ---
+LANGUAGES = {
+    "1": "Shona",
+    "2": "Ndebele",
+    "3": "Tswana",
+    "4": "Portuguese",
+    "5": "Sesotho",
+    "6": "Tonga"
+}
+
 # --- 3. HELPER & FORMATTING FUNCTIONS ---
 
 def get_verse_from_db(passage, db_filename):
@@ -160,7 +170,6 @@ def format_beginners_lesson(lesson):
         message += "No story content is available for this lesson.\n\n"
 
     message += "Have a blessed week! ☀️\n"
-    # MODIFIED: Added 'translate' to the prompt
     message += "_Type 'ask [question]', 'translate', or 'reset'_"
     
     return message.strip()
@@ -208,7 +217,6 @@ def format_search_answer_lesson(lesson, lesson_type):
             message += f"📌 *{section_title}*\n{section_content}\n\n"
 
     message += "Have a blessed week! ✨\n"
-    # MODIFIED: Added 'translate' to the prompt
     message += "_Type 'ask [question]', 'translate', or 'reset'_"
 
     return message.strip()
@@ -223,8 +231,7 @@ def get_ai_response(question, context):
         print(f"Google Gemini API Error: {e}")
         return "I'm having a little trouble thinking right now. Please try again in a moment."
 
-# --- NEW FUNCTION: get_ai_translation ---
-def get_ai_translation(text_to_translate, target_language="Shona"):
+def get_ai_translation(text_to_translate, target_language):
     """Translates text using the Gemini API, preserving markdown."""
     if not gemini_model:
         return "Sorry, the translation module is currently unavailable."
@@ -284,7 +291,6 @@ def handle_bot_logic(user_id, message_text):
             if message_text_lower in CLASSES:
                 class_name = CLASSES[message_text_lower]
                 user_profile['class'] = class_name
-                # MODIFIED: Clearer instructions
                 send_whatsapp_message(user_id, f"Great! Class set to *{class_name}*.\n\nType `lesson` to get this week's lesson.\nType `reset` to go back.")
             else: send_whatsapp_message(user_id, "Invalid class number. Please try again.")
         elif message_text_lower.startswith('ask '):
@@ -302,17 +308,14 @@ def handle_bot_logic(user_id, message_text):
                 if not context: send_whatsapp_message(user_id, "Sorry, I can't find this week's lesson material to answer questions about.")
                 else: ai_answer = get_ai_response(question, context); send_whatsapp_message(user_id, ai_answer)
         
-        # --- NEW: LOGIC FOR TRANSLATION ---
+        # --- MODIFIED: Logic for 'translate' command now shows a menu ---
         elif message_text_lower == 'translate':
             if 'last_lesson_content' in user_profile:
-                content_to_translate = user_profile['last_lesson_content']
-                # You can make the target language dynamic if needed, e.g., based on user settings.
-                target_language = "Shona" 
-                send_whatsapp_message(user_id, f"Translating to {target_language}...")
-                translated_text = get_ai_translation(content_to_translate, target_language)
-                send_whatsapp_message(user_id, translated_text)
-                # Clear the stored content after translation
-                del user_profile['last_lesson_content']
+                user_profile['mode'] = 'awaiting_translation_language'
+                lang_menu = "Please choose a language to translate to:\n\n"
+                for k, v in LANGUAGES.items():
+                    lang_menu += f"*{k}.* {v}\n"
+                send_whatsapp_message(user_id, lang_menu.strip())
             else:
                 send_whatsapp_message(user_id, "Please get a lesson first by typing `lesson`.")
 
@@ -334,16 +337,38 @@ def handle_bot_logic(user_id, message_text):
                         elif user_class in ["Search", "Answer", "Primary Pals"]: formatted_message = format_search_answer_lesson(lesson, user_class)
                         else: formatted_message = f"Sorry, I don't know how to format the lesson for the '{user_class}' class yet."
                         
-                        # MODIFIED: Store the formatted lesson for potential translation
                         user_profile['last_lesson_content'] = formatted_message
                         send_whatsapp_message(user_id, formatted_message)
                     else: send_whatsapp_message(user_id, "Sorry, I couldn't find this week's lesson. It might not be uploaded yet.")
         else: 
-            # MODIFIED: Updated help message
             send_whatsapp_message(user_id, "In *Lessons* section: type `lesson`, `ask [question]`, `translate`, or `reset`.")
 
+    # --- NEW: Logic for handling language selection ---
+    elif user_profile.get('mode') == 'awaiting_translation_language':
+        if message_text_lower in LANGUAGES:
+            target_language = LANGUAGES[message_text_lower]
+            content_to_translate = user_profile.get('last_lesson_content', '')
+            
+            if not content_to_translate:
+                send_whatsapp_message(user_id, "Something went wrong. Please type `lesson` to get the lesson again.")
+                user_profile['mode'] = 'lessons' # Reset mode
+            else:
+                send_whatsapp_message(user_id, f"Translating to {target_language}...")
+                translated_text = get_ai_translation(content_to_translate, target_language)
+                send_whatsapp_message(user_id, translated_text)
+                
+                # Clean up and reset mode after successful translation
+                user_profile['mode'] = 'lessons'
+                if 'last_lesson_content' in user_profile:
+                    del user_profile['last_lesson_content']
+                send_whatsapp_message(user_id, "Translation complete! You are back in the lessons section. Type `reset` to start over.")
+        else:
+            lang_menu = "Invalid selection. Please choose a number from the list:\n\n"
+            for k, v in LANGUAGES.items():
+                lang_menu += f"*{k}.* {v}\n"
+            send_whatsapp_message(user_id, lang_menu.strip())
+
     elif user_profile.get('mode') == 'hymnbook':
-        # ... (no changes in this section)
         if 'hymnbook' not in user_profile:
             if message_text_lower in HYMNBOOKS:
                 selected_hymnbook = HYMNBOOKS[message_text_lower]; user_profile['hymnbook'] = selected_hymnbook['file']
@@ -359,7 +384,6 @@ def handle_bot_logic(user_id, message_text):
             else: send_whatsapp_message(user_id, "Please type a valid hymn number, or `reset` to start over.")
 
     elif user_profile.get('mode') == 'bible':
-        # ... (no changes in this section)
         if 'bible_version_file' not in user_profile:
             if message_text_lower in BIBLES:
                 selected_bible = BIBLES[message_text_lower]
@@ -415,4 +439,4 @@ def whatsapp_webhook():
 
 @app.route('/')
 def health_check():
-    return "SundayBot with Translation is running!", 200
+    return "SundayBot with Multi-Language Translation is running!", 200
