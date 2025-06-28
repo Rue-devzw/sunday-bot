@@ -58,8 +58,6 @@ def get_verse_from_db(passage, db_filename):
         conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
         cursor = conn.cursor()
         
-        # FIX: Updated table name from 'verses' to 'bible_verses' to match your schema.
-        
         if range_match:
             book_name, chapter, start_verse, end_verse = range_match.groups()
             query = "SELECT verse, text FROM bible_verses WHERE book_name_text LIKE ? AND chapter = ? AND verse >= ? AND verse <= ? ORDER BY verse"
@@ -127,31 +125,117 @@ def format_hymn(hymn):
             for v_lines in part['verses']: message += "\n".join(v_lines) + "\n\n"
     return message.strip()
 
+# --- NEW AND IMPROVED FORMATTING FUNCTIONS ---
+
 def format_beginners_lesson(lesson):
-    if not lesson: return "Sorry, no 'Beginners' lesson is available."
+    if not lesson:
+        return "Sorry, no 'Beginners' lesson is available for this week."
+    
+    lesson_id = lesson.get('id', '')
+    lesson_number_str = ''.join(filter(str.isdigit, lesson_id))
+    lesson_number = f" {int(lesson_number_str)}" if lesson_number_str else ""
+
     title = lesson.get('lessonTitle', 'N/A')
-    bible_refs_list = [f"{ref['book']} {ref['chapter']}" for ref in lesson.get('bibleReference', []) if ref.get('book') and ref.get('chapter')]
+    memory_verse = lesson.get('keyVerse') # Check if it exists
+
+    # Format Bible Reference
+    raw_refs = lesson.get('bibleReference', [])
+    bible_refs_list = []
+    if raw_refs:
+        for ref in raw_refs:
+            book = ref.get('book')
+            chapter = ref.get('chapter')
+            verses = ref.get('verses')
+            if book and chapter and verses:
+                bible_refs_list.append(f"{book} {chapter}:{verses}")
+            elif book and chapter:
+                bible_refs_list.append(f"{book} {chapter}")
     bible_refs = ', '.join(bible_refs_list) if bible_refs_list else "N/A"
-    message = f"🖍️ *Beginners Lesson: {title}*\n\n_(Story from: {bible_refs})_\n\n"
+
+    # Build Message
+    message = f"🖍️ *Beginners Lesson{lesson_number}: {title}*\n\n"
+
+    if bible_refs != "N/A":
+        message += f"📖 *Story from:*\n_{bible_refs}_\n\n"
+    
+    if memory_verse:
+        message += f"🔑 *Memory Verse:*\n_{memory_verse}_\n\n"
+
+    message += "----------\n\n"
+
+    has_content = False
     for section in lesson.get('lessonSections', []):
-        if section.get('sectionType') == 'text': message += f"{section.get('sectionContent', 'No story available.')}\n\n"
-    message += "Have a blessed week! ☀️"
-    return message
+        if section.get('sectionType') == 'text':
+            section_title = section.get('sectionTitle', 'Lesson Story')
+            section_content = section.get('sectionContent', '').strip()
+            if section_content:
+                message += f"📌 *{section_title}*\n{section_content}\n\n"
+                has_content = True
+    
+    if not has_content:
+        message += "No story content is available for this lesson.\n\n"
+
+    message += "Have a blessed week! ☀️\n"
+    message += "_Type 'ask [your question]' or 'reset'_"
+    
+    return message.strip()
 
 def format_search_answer_lesson(lesson, lesson_type):
-    if not lesson: return f"Sorry, no '{lesson_type}' lesson is available for this week."
+    if not lesson:
+        return f"Sorry, no '{lesson_type}' lesson is available for this week."
+
+    lesson_id = lesson.get('id', '')
+    lesson_number_str = ''.join(filter(str.isdigit, lesson_id))
+    lesson_number = f" {int(lesson_number_str)}" if lesson_number_str else ""
+
     title = lesson.get('lessonTitle', 'N/A')
-    memory_verse = lesson.get('keyVerse', 'N/A')
-    message = f"📚 *{lesson_type} Lesson: {title}*\n\n"
-    message += f"📖 *Key Verse:*\n_{memory_verse}_\n\n"
+    memory_verse = lesson.get('keyVerse')
+    supplemental = lesson.get('supplementalScripture')
+    resource = lesson.get('resourceMaterial')
+
+    # Format Bible Reference
+    raw_refs = lesson.get('bibleReference', [])
+    bible_refs_list = []
+    if raw_refs:
+        for ref in raw_refs:
+            book = ref.get('book')
+            chapter = ref.get('chapter')
+            verses = ref.get('verses')
+            if book and chapter and verses:
+                bible_refs_list.append(f"{book} {chapter}:{verses}")
+            elif book and chapter:
+                bible_refs_list.append(f"{book} {chapter}")
+    bible_refs = ', '.join(bible_refs_list) if bible_refs_list else "N/A"
+
+    # Build Message
+    message = f"📚 *{lesson_type} Lesson{lesson_number}: {title}*\n\n"
+
+    if bible_refs and bible_refs != 'N/A':
+        message += f"📖 *Bible Reference:*\n_{bible_refs}_\n\n"
+    
+    if supplemental:
+        message += f"📜 *Supplemental Scripture:*\n_{supplemental}_\n\n"
+        
+    if resource:
+        message += f"📦 *Resource Material:*\n_{resource}_\n\n"
+
+    if memory_verse:
+        message += f"🔑 *Key Verse:*\n_{memory_verse}_\n\n"
+
     message += "----------\n\n"
+
     for section in lesson.get('lessonSections', []):
         if section.get('sectionType') in ['text', 'question']:
             section_title = section.get('sectionTitle', 'Section')
-            section_content = section.get('sectionContent', 'No content available.')
+            section_content = section.get('sectionContent', 'No content available.').strip()
             message += f"📌 *{section_title}*\n{section_content}\n\n"
-    message += "Have a blessed week! ✨"
+
+    message += "Have a blessed week! ✨\n"
+    message += "_Type 'ask [your question]' or 'reset'_"
+
     return message.strip()
+
+# --- END OF NEW FORMATTING FUNCTIONS ---
 
 def get_ai_response(question, context):
     if not gemini_model: return "Sorry, the AI thinking module is currently unavailable."
@@ -201,7 +285,7 @@ def handle_bot_logic(user_id, message_text):
         if 'class' not in user_profile:
             if message_text_lower in CLASSES:
                 class_name = CLASSES[message_text_lower]; user_profile['class'] = class_name
-                send_whatsapp_message(user_id, f"Great! Class set to *{class_name}*.\n\nType `lesson` or `ask [your question]`.\nType `reset` to go back.")
+                send_whatsapp_message(user_id, f"Great! Class set to *{class_name}*.\n\nType `lesson` to get this week's lesson, or `ask [your question]` to ask about it.\nType `reset` to go back.")
             else: send_whatsapp_message(user_id, "Invalid class number. Please try again.")
         elif message_text_lower.startswith('ask '):
             question = message_text[4:].strip()
@@ -209,7 +293,7 @@ def handle_bot_logic(user_id, message_text):
             else:
                 send_whatsapp_message(user_id, "🤔 Thinking...")
                 lesson_index = get_current_lesson_index(); user_class = user_profile['class']; context = ""
-                lesson_files = {"Beginners": LESSONS_FILE_BEGINNERS, "Answer": LESSONS_FILE_ANSWER, "Search": LESSONS_FILE_SEARCH}
+                lesson_files = {"Beginners": LESSONS_FILE_BEGINNERS, "Primary Pals": LESSONS_FILE_ANSWER, "Answer": LESSONS_FILE_ANSWER, "Search": LESSONS_FILE_SEARCH}
                 lesson_file_name = lesson_files.get(user_class)
                 if lesson_file_name:
                     lessons_path = os.path.join(os.path.dirname(__file__), lesson_file_name)
@@ -222,7 +306,7 @@ def handle_bot_logic(user_id, message_text):
             lesson_index = get_current_lesson_index(); user_class = user_profile.get('class')
             if lesson_index < 0: send_whatsapp_message(user_id, "It seems there are no lessons scheduled for this week.")
             else:
-                lesson_files = {"Beginners": LESSONS_FILE_BEGINNERS, "Answer": LESSONS_FILE_ANSWER, "Search": LESSONS_FILE_SEARCH}
+                lesson_files = {"Beginners": LESSONS_FILE_BEGINNERS, "Primary Pals": LESSONS_FILE_ANSWER, "Answer": LESSONS_FILE_ANSWER, "Search": LESSONS_FILE_SEARCH}
                 lesson_file_name = lesson_files.get(user_class)
                 if not lesson_file_name: send_whatsapp_message(user_id, f"Sorry, lessons for the '{user_class}' class are not available yet.")
                 else:
@@ -231,7 +315,7 @@ def handle_bot_logic(user_id, message_text):
                     if lessons_data and 0 <= lesson_index < len(lessons_data):
                         lesson = lessons_data[lesson_index]; formatted_message = ""
                         if user_class == "Beginners": formatted_message = format_beginners_lesson(lesson)
-                        elif user_class in ["Search", "Answer"]: formatted_message = format_search_answer_lesson(lesson, user_class)
+                        elif user_class in ["Search", "Answer", "Primary Pals"]: formatted_message = format_search_answer_lesson(lesson, user_class)
                         else: formatted_message = f"Sorry, I don't know how to format the lesson for the '{user_class}' class yet."
                         send_whatsapp_message(user_id, formatted_message)
                     else: send_whatsapp_message(user_id, "Sorry, I couldn't find this week's lesson. It might not be uploaded yet.")
