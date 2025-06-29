@@ -25,14 +25,17 @@ VERIFY_TOKEN = os.environ.get('VERIFY_TOKEN')
 WHATSAPP_TOKEN = os.environ.get('WHATSAPP_TOKEN')
 PHONE_NUMBER_ID = os.environ.get('PHONE_NUMBER_ID')
 
+# FIX: Main anchor date for Beginners, Answer, and Search classes.
 ANCHOR_DATE = date(2024, 8, 21)
+# FIX: A separate anchor date specifically for the Primary Pals curriculum.
+PRIMARY_PALS_ANCHOR_DATE = date(2024, 9, 1)
+
 USERS_FILE = 'users.json'
 HYMNBOOKS_DIR = 'hymnbooks'
 BIBLES_DIR = 'bibles'
 LESSONS_FILE_SEARCH = 'search_lessons.json'
 LESSONS_FILE_ANSWER = 'answer_lessons.json'
 LESSONS_FILE_BEGINNERS = 'beginners_lessons.json'
-# FIX: Added a new constant for the Primary Pals lesson file.
 LESSONS_FILE_PRIMARY_PALS = 'primary_pals_lessons.json'
 
 
@@ -113,9 +116,17 @@ def save_json_data(data, file_path):
     with open(file_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=4)
 
-def get_current_lesson_index():
+# FIX: The function now takes user_class to dynamically determine which anchor date to use.
+def get_current_lesson_index(user_class):
     today = date.today()
-    anchor_week_start = ANCHOR_DATE + relativedelta(weekday=MO(-1))
+    
+    # Select the correct anchor date based on the user's class
+    if user_class == "Primary Pals":
+        anchor_date = PRIMARY_PALS_ANCHOR_DATE
+    else:
+        anchor_date = ANCHOR_DATE
+            
+    anchor_week_start = anchor_date + relativedelta(weekday=MO(-1))
     current_week_start = today + relativedelta(weekday=MO(-1))
     week_difference = (current_week_start - anchor_week_start).days // 7
     return week_difference if week_difference >= 0 else -1
@@ -193,7 +204,6 @@ def format_beginners_lesson(lesson):
     
     return message.strip()
 
-# FIX: New function to format the Primary Pals lessons from its specific JSON structure.
 def format_primary_pals_lesson(lesson):
     if not lesson:
         return "Sorry, no 'Primary Pals' lesson is available for this week."
@@ -201,7 +211,6 @@ def format_primary_pals_lesson(lesson):
     lesson_id_str = lesson.get('lesson_id', '')
     title = lesson.get('title', 'N/A')
 
-    # Extract parent guide info
     parent_guide = lesson.get('parent_guide', {})
     bible_text_info = parent_guide.get('bible_text', {})
     bible_refs = bible_text_info.get('reference', 'N/A')
@@ -211,22 +220,18 @@ def format_primary_pals_lesson(lesson):
     memory_verse_ref = memory_verse_info.get('reference', '')
     memory_verse = f"{memory_verse_text} — {memory_verse_ref}" if memory_verse_text and memory_verse_ref else 'N/A'
 
-    # Story content
     story_paragraphs = lesson.get('story', [])
     story_content = "\n\n".join(story_paragraphs)
 
-    # Parent's Corner content
     parents_corner_info = parent_guide.get('parents_corner', {})
     parents_corner_title = parents_corner_info.get('title', "Parent's Corner")
     parents_corner_text = parents_corner_info.get('text', 'No guide available.')
 
-    # Family Devotions content
     family_devotions_info = parent_guide.get('family_devotions', {})
     family_devotions_title = family_devotions_info.get('title', 'Family Devotions')
     family_devotions_intro = family_devotions_info.get('intro', '')
     devotion_verses = family_devotions_info.get('verses', [])
 
-    # Build the message string
     message = f"🧸 *Primary Pals Lesson {lesson_id_str.upper()}: {title}*\n\n"
     
     if bible_refs != 'N/A':
@@ -239,7 +244,6 @@ def format_primary_pals_lesson(lesson):
     
     message += f"✨ *Lesson Story*\n{story_content}\n\n"
     
-    # Add Parent Guide section
     message += "--- *Parent's Guide* ---\n\n"
     message += f"📌 *{parents_corner_title}*\n{parents_corner_text}\n\n"
     
@@ -396,7 +400,6 @@ def handle_bot_logic(user_id, message_text):
                 send_whatsapp_message(user_id, f"Great! Class set to *{class_name}*.\n\nType `lesson` to get this week's lesson.\nType `reset` to go back.")
             else: send_whatsapp_message(user_id, "Invalid class number. Please try again.")
         
-        # FIX: Mapped Primary Pals to its own lesson file.
         lesson_files = {
             "Beginners": LESSONS_FILE_BEGINNERS, 
             "Primary Pals": LESSONS_FILE_PRIMARY_PALS, 
@@ -409,8 +412,8 @@ def handle_bot_logic(user_id, message_text):
             if not question: send_whatsapp_message(user_id, "Please type a question after the word `ask`.")
             else:
                 send_whatsapp_message(user_id, "🤔 Thinking...")
-                lesson_index = get_current_lesson_index()
                 user_class = user_profile['class']
+                lesson_index = get_current_lesson_index(user_class)
                 context = ""
                 lesson_file_name = lesson_files.get(user_class)
                 
@@ -439,8 +442,8 @@ def handle_bot_logic(user_id, message_text):
 
         elif message_text_lower == 'lesson':
             send_whatsapp_message(user_id, "Fetching this week's lesson...")
-            lesson_index = get_current_lesson_index()
             user_class = user_profile.get('class')
+            lesson_index = get_current_lesson_index(user_class)
             
             if lesson_index < 0: 
                 send_whatsapp_message(user_id, "It seems there are no lessons scheduled for this week.")
@@ -452,7 +455,6 @@ def handle_bot_logic(user_id, message_text):
                     lessons_path = os.path.join(os.path.dirname(__file__), lesson_file_name)
                     raw_lessons_data = load_json_data(lessons_path)
                     
-                    # FIX: Handle the different JSON structures
                     lessons_data_list = []
                     if user_class == "Primary Pals":
                         lessons_data_list = raw_lessons_data.get("primary_pals_lessons", [])
