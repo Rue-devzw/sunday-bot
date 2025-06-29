@@ -35,8 +35,8 @@ LESSONS_FILE_BEGINNERS = 'beginners_lessons.json'
 
 CLASSES = { "1": "Beginners", "2": "Primary Pals", "3": "Answer", "4": "Search" }
 HYMNBOOKS = {
-    "1": {"name": "Nziyo Dzekurumbidza (Shona Hymns)", "file": "shona_hymns.json"},
-    "2": {"name": "Great Hymns of Faith (English)", "file": "english_hymns.json"}
+    "1": {"name": "Yellow Hymnbook Shona", "file": "shona_hymns.json"},
+    "2": {"name": "Sing Praises Unto Our King", "file": "english_hymns.json"}
 }
 BIBLES = {
     "1": {"name": "Shona Bible", "file": "shona_bible.db"},
@@ -117,24 +117,49 @@ def get_current_lesson_index():
     week_difference = (current_week_start - anchor_week_start).days // 7
     return week_difference if week_difference >= 0 else -1
 
+# --- FIX: HYMN FORMATTING LOGIC ---
+# This version correctly handles hymns with a separate repeating chorus.
 def format_hymn(hymn):
-    if not hymn: return "Sorry, I couldn't find a hymn with that number in your selected hymnbook."
+    if not hymn:
+        return "Sorry, I couldn't find a hymn with that number in your selected hymnbook."
+    
     title = hymn.get('title', 'No Title')
     hymn_number = hymn.get('number', '#')
     message = f"🎶 *Hymn #{hymn_number}: {title}*\n\n"
+    
     verses = hymn.get('verses', [])
     chorus = hymn.get('chorus', [])
     parts = hymn.get('parts', [])
+    
+    # Pre-format the chorus text if it exists as a separate item
+    chorus_text = ""
+    if chorus:
+        chorus_text = "*Chorus:*\n" + "\n".join(chorus) + "\n\n"
+        
+    # Handle verses
     if verses:
-        for i, verse_lines in enumerate(verses, 1): message += f"*{i}.*\n" + "\n".join(verse_lines) + "\n\n"
-    if chorus: message += "*Chorus:*\n" + "\n".join(chorus) + "\n\n"
+        for i, verse_lines in enumerate(verses, 1):
+            # Add the verse number and content
+            message += f"*{i}.*\n" + "\n".join(verse_lines) + "\n\n"
+            # Add the pre-formatted chorus text after each verse if it exists.
+            # This correctly handles hymns with a distinct, repeating chorus.
+            if chorus_text:
+                message += chorus_text
+    # Handle case where there's only a chorus and no verses
+    elif chorus_text:
+        message += chorus_text
+
+    # Handle parts separately
     if parts:
         for part in parts:
-            message += f"*Part {part['part']}*\n"
-            for v_lines in part['verses']: message += "\n".join(v_lines) + "\n\n"
+            part_num = part.get('part', '')
+            message += f"*{f'Part {part_num}' if part_num else 'Part'}*\n"
+            # Number the stanzas within a part
+            for i, v_lines in enumerate(part.get('verses', []), 1):
+                message += f"*{i}.*\n" + "\n".join(v_lines) + "\n\n"
+
     return message.strip()
 
-# FIX: Removed <no_translate> tags from user-facing messages
 def format_beginners_lesson(lesson):
     if not lesson:
         return "Sorry, no 'Beginners' lesson is available for this week."
@@ -154,7 +179,7 @@ def format_beginners_lesson(lesson):
     if bible_refs != "N/A":
         message += f"📖 *Story from:*\n_{bible_refs}_\n\n"
     if memory_verse:
-        message += f"🔑 *Key Verse:*\n_{memory_verse}_\n\n"
+        message += f"🔑 *Memory Verse:*\n_{memory_verse}_\n\n"
     
     message += "----------\n\n"
 
@@ -175,7 +200,6 @@ def format_beginners_lesson(lesson):
     
     return message.strip()
 
-# FIX: Removed <no_translate> tags from user-facing messages
 def format_search_answer_lesson(lesson, lesson_type):
     if not lesson:
         return f"Sorry, no '{lesson_type}' lesson is available for this week."
@@ -234,24 +258,23 @@ def get_ai_response(question, context):
         print(f"Google Gemini API Error: {e}")
         return "I'm having a little trouble thinking right now. Please try again in a moment."
 
-# --- MODIFIED: get_ai_translation uses programmatic extraction ---
+# --- FIX: AI TRANSLATION LOGIC ---
+# Updated regex to handle both "Key Verse" and "Memory Verse" consistently.
 def get_ai_translation(text_to_translate, target_language):
-    """Programmatically extracts the Key Verse, translates the rest, and re-inserts it."""
+    """Programmatically extracts the Key/Memory Verse, translates the rest, and re-inserts it."""
     if not gemini_model:
         return "Sorry, the translation module is currently unavailable."
 
     key_verse_block = ""
     text_for_translation = text_to_translate
-    placeholder = "[KEY_VERSE_PLACEHOLDER]"
+    placeholder = "[VERSE_PLACEHOLDER]"
 
-    # Find and extract the Key Verse block using a reliable pattern
-    # The pattern looks for the Key Verse emoji and title, and captures everything until the next double newline.
-    key_verse_pattern = re.compile(r"(🔑 \*Key Verse:\*.*?\n\n)", re.DOTALL)
+    # Updated regex to match "Key Verse" OR "Memory Verse"
+    key_verse_pattern = re.compile(r"(🔑 \*(?:Key|Memory) Verse:\*.*?\n\n)", re.DOTALL)
     match = key_verse_pattern.search(text_to_translate)
     
     if match:
         key_verse_block = match.group(1)
-        # Replace the found block with our placeholder for the AI
         text_for_translation = text_to_translate.replace(key_verse_block, placeholder)
 
     prompt = (
@@ -266,7 +289,6 @@ def get_ai_translation(text_to_translate, target_language):
         response = gemini_model.generate_content(prompt)
         translated_text = response.text.strip()
         
-        # If we used a placeholder, substitute it back with the original Key Verse
         if key_verse_block:
             final_translation = translated_text.replace(placeholder, key_verse_block)
         else:
