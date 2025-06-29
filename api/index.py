@@ -117,8 +117,6 @@ def get_current_lesson_index():
     week_difference = (current_week_start - anchor_week_start).days // 7
     return week_difference if week_difference >= 0 else -1
 
-# --- FIX: HYMN FORMATTING LOGIC ---
-# This version correctly handles hymns with a separate repeating chorus.
 def format_hymn(hymn):
     if not hymn:
         return "Sorry, I couldn't find a hymn with that number in your selected hymnbook."
@@ -131,30 +129,22 @@ def format_hymn(hymn):
     chorus = hymn.get('chorus', [])
     parts = hymn.get('parts', [])
     
-    # Pre-format the chorus text if it exists as a separate item
     chorus_text = ""
     if chorus:
         chorus_text = "*Chorus:*\n" + "\n".join(chorus) + "\n\n"
         
-    # Handle verses
     if verses:
         for i, verse_lines in enumerate(verses, 1):
-            # Add the verse number and content
             message += f"*{i}.*\n" + "\n".join(verse_lines) + "\n\n"
-            # Add the pre-formatted chorus text after each verse if it exists.
-            # This correctly handles hymns with a distinct, repeating chorus.
             if chorus_text:
                 message += chorus_text
-    # Handle case where there's only a chorus and no verses
     elif chorus_text:
         message += chorus_text
 
-    # Handle parts separately
     if parts:
         for part in parts:
             part_num = part.get('part', '')
             message += f"*{f'Part {part_num}' if part_num else 'Part'}*\n"
-            # Number the stanzas within a part
             for i, v_lines in enumerate(part.get('verses', []), 1):
                 message += f"*{i}.*\n" + "\n".join(v_lines) + "\n\n"
 
@@ -258,10 +248,7 @@ def get_ai_response(question, context):
         print(f"Google Gemini API Error: {e}")
         return "I'm having a little trouble thinking right now. Please try again in a moment."
 
-# --- FIX: AI TRANSLATION LOGIC ---
-# Updated regex to handle both "Key Verse" and "Memory Verse" consistently.
 def get_ai_translation(text_to_translate, target_language):
-    """Programmatically extracts the Key/Memory Verse, translates the rest, and re-inserts it."""
     if not gemini_model:
         return "Sorry, the translation module is currently unavailable."
 
@@ -269,7 +256,6 @@ def get_ai_translation(text_to_translate, target_language):
     text_for_translation = text_to_translate
     placeholder = "[VERSE_PLACEHOLDER]"
 
-    # Updated regex to match "Key Verse" OR "Memory Verse"
     key_verse_pattern = re.compile(r"(🔑 \*(?:Key|Memory) Verse:\*.*?\n\n)", re.DOTALL)
     match = key_verse_pattern.search(text_to_translate)
     
