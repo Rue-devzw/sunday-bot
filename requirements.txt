@@ -1,6 +1,6 @@
-# requirements.txt
-Flask==2.3.3
-python-dateutil==2.8.2
-requests==2.31.0
-groq==0.4.2
+flask
+requests
 google-generativeai
+python-dateutil
+gspread
+oauth2client

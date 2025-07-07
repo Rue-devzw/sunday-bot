@@ -7,8 +7,11 @@ import google.generativeai as genai
 import sqlite3
 import re
 from flask import Flask, request
-from datetime import date
+from datetime import datetime, date
 from dateutil.relativedelta import relativedelta, MO
+# Added gspread for Google Sheets integration
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 # --- 1. INITIALIZE FLASK & API CLIENTS ---
 app = Flask(__name__)
@@ -25,7 +28,10 @@ VERIFY_TOKEN = os.environ.get('VERIFY_TOKEN')
 WHATSAPP_TOKEN = os.environ.get('WHATSAPP_TOKEN')
 PHONE_NUMBER_ID = os.environ.get('PHONE_NUMBER_ID')
 
-# Main anchor date for Beginners, Answer, and Search classes.
+GOOGLE_CREDENTIALS_JSON = os.environ.get('GOOGLE_CREDENTIALS_JSON')
+GOOGLE_SHEET_NAME = os.environ.get('GOOGLE_SHEET_NAME', 'Camp Registrations 2025')
+
+# Anchor date for Beginners, Answer, and Search classes.
 ANCHOR_DATE = date(2024, 8, 21)
 # A separate anchor date specifically for the Primary Pals curriculum.
 PRIMARY_PALS_ANCHOR_DATE = date(2024, 9, 1)
@@ -49,7 +55,41 @@ BIBLES = {
     "2": {"name": "English Bible (KJV)", "file": "english_bible.db"}
 }
 
+LANGUAGES = {
+    "1": "Shona",
+    "2": "Ndebele",
+    "3": "Tswana",
+    "4": "Portuguese",
+    "5": "Sesotho",
+    "6": "Tonga"
+}
+
 # --- 3. HELPER & FORMATTING FUNCTIONS ---
+
+def append_to_google_sheet(data_row):
+    if not GOOGLE_CREDENTIALS_JSON:
+        print("ERROR: Google credentials JSON not set in environment variables.")
+        return False
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+        sheet = client.open(GOOGLE_SHEET_NAME).sheet1
+        sheet.append_row(data_row)
+        return True
+    except Exception as e:
+        print(f"Error appending to Google Sheet: {e}")
+        return False
+
+def calculate_age(dob_string):
+    try:
+        birth_date = datetime.strptime(dob_string, "%d/%m/%Y").date()
+        today = date.today()
+        age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+        return age
+    except ValueError:
+        return None
 
 def get_verse_from_db(passage, db_filename):
     db_path = os.path.join(os.path.dirname(__file__), BIBLES_DIR, db_filename)
@@ -109,7 +149,6 @@ def save_json_data(data, file_path):
 
 def get_current_lesson_index(user_class):
     today = date.today()
-    
     if user_class == "Primary Pals":
         anchor_date = PRIMARY_PALS_ANCHOR_DATE
     else:
@@ -121,61 +160,37 @@ def get_current_lesson_index(user_class):
     return week_difference if week_difference >= 0 else -1
 
 def format_hymn(hymn):
-    if not hymn:
-        return "Sorry, I couldn't find a hymn with that number in your selected hymnbook."
-    
-    title = hymn.get('title', 'No Title')
-    hymn_number = hymn.get('number', '#')
+    if not hymn: return "Sorry, I couldn't find a hymn with that number in your selected hymnbook."
+    title, hymn_number = hymn.get('title', 'No Title'), hymn.get('number', '#')
     message = f"🎶 *Hymn #{hymn_number}: {title}*\n\n"
-    
-    verses = hymn.get('verses', [])
-    chorus = hymn.get('chorus', [])
-    parts = hymn.get('parts', [])
-    
-    chorus_text = ""
-    if chorus:
-        chorus_text = "*Chorus:*\n" + "\n".join(chorus) + "\n\n"
-        
+    verses, chorus, parts = hymn.get('verses', []), hymn.get('chorus', []), hymn.get('parts', [])
+    chorus_text = "*Chorus:*\n" + "\n".join(chorus) + "\n\n" if chorus else ""
     if verses:
         for i, verse_lines in enumerate(verses, 1):
             message += f"*{i}.*\n" + "\n".join(verse_lines) + "\n\n"
-            if chorus_text:
-                message += chorus_text
-    elif chorus_text:
-        message += chorus_text
-
+            if chorus_text: message += chorus_text
+    elif chorus_text: message += chorus_text
     if parts:
         for part in parts:
             part_num = part.get('part', '')
             message += f"*{f'Part {part_num}' if part_num else 'Part'}*\n"
             for i, v_lines in enumerate(part.get('verses', []), 1):
                 message += f"*{i}.*\n" + "\n".join(v_lines) + "\n\n"
-
     return message.strip()
 
 def format_beginners_lesson(lesson):
-    if not lesson:
-        return "Sorry, no 'Beginners' lesson is available for this week."
-    
+    if not lesson: return "Sorry, no 'Beginners' lesson is available for this week."
     lesson_id = lesson.get('id', '')
     lesson_number_str = ''.join(filter(str.isdigit, lesson_id))
     lesson_number = f" {int(lesson_number_str)}" if lesson_number_str else ""
-
-    title = lesson.get('lessonTitle', 'N/A')
-    memory_verse = lesson.get('keyVerse')
-
+    title, memory_verse = lesson.get('lessonTitle', 'N/A'), lesson.get('keyVerse')
     raw_refs = lesson.get('bibleReference', [])
     bible_refs_list = [f"{ref.get('book')} {ref.get('chapter')}" for ref in raw_refs if ref.get('book') and ref.get('chapter')]
     bible_refs = ', '.join(bible_refs_list) if bible_refs_list else "N/A"
-
     message = f"🖍️ *Beginners Lesson{lesson_number}: {title}*\n\n"
-    if bible_refs != "N/A":
-        message += f"📖 *Story from:*\n_{bible_refs}_\n\n"
-    if memory_verse:
-        message += f"🔑 *Memory Verse:*\n_{memory_verse}_\n\n"
-    
+    if bible_refs != "N/A": message += f"📖 *Story from:*\n_{bible_refs}_\n\n"
+    if memory_verse: message += f"🔑 *Memory Verse:*\n_{memory_verse}_\n\n"
     message += "----------\n\n"
-
     has_content = False
     for section in lesson.get('lessonSections', []):
         if section.get('sectionType') == 'text':
@@ -184,119 +199,64 @@ def format_beginners_lesson(lesson):
             if section_content:
                 message += f"📌 *{section_title}*\n{section_content}\n\n"
                 has_content = True
-    
-    if not has_content:
-        message += "No story content is available for this lesson.\n\n"
-
-    message += "Have a blessed week! ☀️\n"
-    message += "_Type 'ask [question]' or 'reset'_"
-    
+    if not has_content: message += "No story content is available for this lesson.\n\n"
+    message += "Have a blessed week! ☀️\n_Type 'ask [question]', 'translate', or 'reset'_"
     return message.strip()
 
 def format_primary_pals_lesson(lesson):
-    if not lesson:
-        return "Sorry, no 'Primary Pals' lesson is available for this week."
-
-    lesson_id_str = lesson.get('lesson_id', '')
-    title = lesson.get('title', 'N/A')
-
+    if not lesson: return "Sorry, no 'Primary Pals' lesson is available for this week."
+    lesson_id_str, title = lesson.get('lesson_id', ''), lesson.get('title', 'N/A')
     parent_guide = lesson.get('parent_guide', {})
     bible_text_info = parent_guide.get('bible_text', {})
     bible_refs = bible_text_info.get('reference', 'N/A')
-    
     memory_verse_info = parent_guide.get('memory_verse', {})
-    memory_verse_text = memory_verse_info.get('text', '')
-    memory_verse_ref = memory_verse_info.get('reference', '')
+    memory_verse_text, memory_verse_ref = memory_verse_info.get('text', ''), memory_verse_info.get('reference', '')
     memory_verse = f"{memory_verse_text} — {memory_verse_ref}" if memory_verse_text and memory_verse_ref else 'N/A'
-
-    story_paragraphs = lesson.get('story', [])
-    story_content = "\n\n".join(story_paragraphs)
-
+    story_paragraphs, story_content = lesson.get('story', []), ""
+    if story_paragraphs: story_content = "\n\n".join(story_paragraphs)
     parents_corner_info = parent_guide.get('parents_corner', {})
     parents_corner_title = parents_corner_info.get('title', "Parent's Corner")
     parents_corner_text = parents_corner_info.get('text', 'No guide available.')
-
     family_devotions_info = parent_guide.get('family_devotions', {})
-    family_devotions_title = family_devotions_info.get('title', 'Family Devotions')
-    family_devotions_intro = family_devotions_info.get('intro', '')
+    family_devotions_title, family_devotions_intro = family_devotions_info.get('title', 'Family Devotions'), family_devotions_info.get('intro', '')
     devotion_verses = family_devotions_info.get('verses', [])
-
     message = f"🧸 *Primary Pals Lesson {lesson_id_str.upper()}: {title}*\n\n"
-    
-    if bible_refs != 'N/A':
-        message += f"📖 *Bible Text:*\n_{bible_refs}_\n\n"
-    
-    if memory_verse != 'N/A':
-        message += f"🔑 *Memory Verse:*\n_{memory_verse}_\n\n"
-        
+    if bible_refs != 'N/A': message += f"📖 *Bible Text:*\n_{bible_refs}_\n\n"
+    if memory_verse != 'N/A': message += f"🔑 *Memory Verse:*\n_{memory_verse}_\n\n"
     message += "----------\n\n"
-    
-    message += f"✨ *Lesson Story*\n{story_content}\n\n"
-    
-    message += "--- *Parent's Guide* ---\n\n"
-    message += f"📌 *{parents_corner_title}*\n{parents_corner_text}\n\n"
-    
+    if story_content: message += f"✨ *Lesson Story*\n{story_content}\n\n"
+    message += f"--- *Parent's Guide* ---\n\n📌 *{parents_corner_title}*\n{parents_corner_text}\n\n"
     message += f"📌 *{family_devotions_title}*\n"
-    if family_devotions_intro:
-        message += f"_{family_devotions_intro}_\n"
-    
-    devotions_str = ""
-    for verse in devotion_verses:
-        devotions_str += f"  *{verse.get('day')}:* {verse.get('reference')}\n"
+    if family_devotions_intro: message += f"_{family_devotions_intro}_\n"
+    devotions_str = "".join([f"  *{v.get('day')}:* {v.get('reference')}\n" for v in devotion_verses])
     message += devotions_str
-    
-    message += "\nHave a blessed week! 🧸\n"
-    message += "_Type 'ask [question]' or 'reset'_"
-
+    message += "\nHave a blessed week! 🧸\n_Type 'ask [question]', 'translate', or 'reset'_"
     return message.strip()
 
-
 def format_search_answer_lesson(lesson, lesson_type):
-    if not lesson:
-        return f"Sorry, no '{lesson_type}' lesson is available for this week."
-
+    if not lesson: return f"Sorry, no '{lesson_type}' lesson is available for this week."
     lesson_id = lesson.get('id', '')
     lesson_number_str = ''.join(filter(str.isdigit, lesson_id))
     lesson_number = f" {int(lesson_number_str)}" if lesson_number_str else ""
-
-    title = lesson.get('lessonTitle', 'N/A')
-    memory_verse = lesson.get('keyVerse')
-    supplemental = lesson.get('supplementalScripture')
-    resource = lesson.get('resourceMaterial')
-
+    title, memory_verse, supplemental, resource = lesson.get('lessonTitle', 'N/A'), lesson.get('keyVerse'), lesson.get('supplementalScripture'), lesson.get('resourceMaterial')
     raw_refs = lesson.get('bibleReference', [])
     bible_refs_list = []
     if raw_refs:
         for ref in raw_refs:
             book, chapter, verses = ref.get('book'), ref.get('chapter'), ref.get('verses')
-            if book and chapter and verses:
-                bible_refs_list.append(f"{book} {chapter}:{verses}")
-            elif book and chapter:
-                bible_refs_list.append(f"{book} {chapter}")
+            ref_str = f"{book} {chapter}" + (f":{verses}" if verses else "")
+            bible_refs_list.append(ref_str)
     bible_refs = ', '.join(bible_refs_list) if bible_refs_list else "N/A"
-
     message = f"📚 *{lesson_type} Lesson{lesson_number}: {title}*\n\n"
-    if bible_refs and bible_refs != 'N/A':
-        message += f"📖 *Bible Reference:*\n_{bible_refs}_\n\n"
-    if supplemental:
-        message += f"📜 *Supplemental Scripture:*\n_{supplemental}_\n\n"
-    if resource:
-        message += f"📦 *Resource Material:*\n_{resource}_\n\n"
-        
-    if memory_verse:
-        message += f"🔑 *Key Verse:*\n_{memory_verse}_\n\n"
-
+    if bible_refs != 'N/A': message += f"📖 *Bible Reference:*\n_{bible_refs}_\n\n"
+    if supplemental: message += f"📜 *Supplemental Scripture:*\n_{supplemental}_\n\n"
+    if resource: message += f"📦 *Resource Material:*\n_{resource}_\n\n"
+    if memory_verse: message += f"🔑 *Key Verse:*\n_{memory_verse}_\n\n"
     message += "----------\n\n"
-
     for section in lesson.get('lessonSections', []):
         if section.get('sectionType') in ['text', 'question']:
-            section_title = section.get('sectionTitle', 'Section')
-            section_content = section.get('sectionContent', 'No content available.').strip()
-            message += f"📌 *{section_title}*\n{section_content}\n\n"
-
-    message += "Have a blessed week! ✨\n"
-    message += "_Type 'ask [question]' or 'reset'_"
-
+            message += f"📌 *{section.get('sectionTitle', 'Section')}*\n{section.get('sectionContent', 'No content available.').strip()}\n\n"
+    message += "Have a blessed week! ✨\n_Type 'ask [question]', 'translate', or 'reset'_"
     return message.strip()
 
 def get_ai_response(question, context):
@@ -309,6 +269,23 @@ def get_ai_response(question, context):
         print(f"Google Gemini API Error: {e}")
         return "I'm having a little trouble thinking right now. Please try again in a moment."
 
+def get_ai_translation(text_to_translate, target_language):
+    if not gemini_model: return "Sorry, the translation module is currently unavailable."
+    key_verse_block, placeholder = "", "[VERSE_PLACEHOLDER]"
+    key_verse_pattern = re.compile(r"(🔑 \*(?:Key|Memory) Verse:\*.*?\n\n)", re.DOTALL)
+    match = key_verse_pattern.search(text_to_translate)
+    if match:
+        key_verse_block = match.group(1)
+        text_to_translate = text_to_translate.replace(key_verse_block, placeholder)
+    prompt = (f"You are a professional translator. Translate the following text into {target_language}. Preserve the original formatting, including WhatsApp markdown like *bold* and _italics_. Do not add any extra commentary. Just provide the direct translation.\n\n--- TEXT TO TRANSLATE ---\n{text_to_translate}")
+    try:
+        response = gemini_model.generate_content(prompt)
+        translated_text = response.text.strip()
+        return translated_text.replace(placeholder, key_verse_block) if key_verse_block else translated_text
+    except Exception as e:
+        print(f"Google Gemini API Translation Error: {e}")
+        return f"I'm having trouble translating to {target_language} right now. Please try again in a moment."
+
 # --- MAIN BOT LOGIC HANDLER ---
 def handle_bot_logic(user_id, message_text):
     user_file = get_user_file_path()
@@ -319,7 +296,7 @@ def handle_bot_logic(user_id, message_text):
 
     if message_text_lower == 'reset':
         user_profile = {}
-        send_whatsapp_message(user_id, "Your session has been reset. Welcome! 🙏\n\nPlease choose a section:\n\n*1.* Weekly Lessons\n*2.* Hymnbook\n*3.* Bible Lookup")
+        send_whatsapp_message(user_id, "Your session has been reset. Welcome! 🙏\n\nPlease choose a section:\n\n*1.* Weekly Lessons\n*2.* Hymnbook\n*3.* Bible Lookup\n*4.* Camp Registration")
         if user_id in users: del users[user_id]
         save_json_data(users, user_file)
         return
@@ -340,8 +317,15 @@ def handle_bot_logic(user_id, message_text):
             bible_menu = "Please select a Bible version:\n\n"
             for k, b in BIBLES.items(): bible_menu += f"*{k}.* {b['name']}\n"
             send_whatsapp_message(user_id, bible_menu.strip())
+        elif message_text_lower == '4':
+            user_profile['mode'] = 'camp_registration'
+            user_profile['registration_step'] = 'start'
+            # Immediately start the registration flow
+            handle_bot_logic(user_id, message_text)
+            return
         else:
-            send_whatsapp_message(user_id, "Welcome! 🙏\n\nPlease choose a section:\n\n*1.* Weekly Lessons\n*2.* Hymnbook\n*3.* Bible Lookup")
+            send_whatsapp_message(user_id, "Welcome! 🙏\n\nPlease choose a section:\n\n*1.* Weekly Lessons\n*2.* Hymnbook\n*3.* Bible Lookup\n*4.* Camp Registration")
+            return
     
     elif user_profile.get('mode') == 'lessons':
         if 'class' not in user_profile:
@@ -381,6 +365,16 @@ def handle_bot_logic(user_id, message_text):
                     ai_answer = get_ai_response(question, context)
                     send_whatsapp_message(user_id, ai_answer)
         
+        elif message_text_lower == 'translate':
+            if 'last_lesson_content' in user_profile:
+                user_profile['mode'] = 'awaiting_translation_language'
+                lang_menu = "Please choose a language to translate to:\n\n"
+                for k, v in LANGUAGES.items():
+                    lang_menu += f"*{k}.* {v}\n"
+                send_whatsapp_message(user_id, lang_menu.strip())
+            else:
+                send_whatsapp_message(user_id, "Please get a lesson first by typing `lesson`.")
+
         elif message_text_lower == 'lesson':
             send_whatsapp_message(user_id, "Fetching this week's lesson...")
             user_class = user_profile.get('class')
@@ -415,11 +409,169 @@ def handle_bot_logic(user_id, message_text):
                         else: 
                             formatted_message = f"Sorry, I don't know how to format the lesson for the '{user_class}' class yet."
                         
+                        user_profile['last_lesson_content'] = formatted_message
                         send_whatsapp_message(user_id, formatted_message)
                     else: 
                         send_whatsapp_message(user_id, "Sorry, I couldn't find this week's lesson. It might not be uploaded yet.")
         else: 
-            send_whatsapp_message(user_id, "In *Lessons* section: type `lesson`, `ask [question]`, or `reset`.")
+            send_whatsapp_message(user_id, "In *Lessons* section: type `lesson`, `ask [question]`, `translate`, or `reset`.")
+
+    elif user_profile.get('mode') == 'awaiting_translation_language':
+        if message_text_lower in LANGUAGES:
+            target_language = LANGUAGES[message_text_lower]
+            content_to_translate = user_profile.get('last_lesson_content', '')
+            
+            if not content_to_translate:
+                send_whatsapp_message(user_id, "Something went wrong. Please type `lesson` to get the lesson again.")
+                user_profile['mode'] = 'lessons'
+            else:
+                send_whatsapp_message(user_id, f"Translating to {target_language}...")
+                translated_text = get_ai_translation(content_to_translate, target_language)
+                send_whatsapp_message(user_id, translated_text)
+                
+                user_profile['mode'] = 'lessons'
+                if 'last_lesson_content' in user_profile:
+                    del user_profile['last_lesson_content']
+                send_whatsapp_message(user_id, "Translation complete! You are back in the lessons section. Type `reset` to start over.")
+        else:
+            lang_menu = "Invalid selection. Please choose a number from the list:\n\n"
+            for k, v in LANGUAGES.items():
+                lang_menu += f"*{k}.* {v}\n"
+            send_whatsapp_message(user_id, lang_menu.strip())
+
+    elif user_profile.get('mode') == 'camp_registration':
+        step = user_profile.get('registration_step', 'start')
+        data = user_profile.setdefault('registration_data', {})
+
+        if step == 'start':
+            send_whatsapp_message(user_id, "🏕️ *2025 Annual Camp Registration*\n\nLet's get you registered. I'll ask you a few questions one by one. You can type `reset` at any time to cancel.\n\nFirst, what is your *first name*?")
+            user_profile['registration_step'] = 'awaiting_first_name'
+        
+        elif step == 'awaiting_first_name':
+            data['first_name'] = message_text.strip()
+            send_whatsapp_message(user_id, "Great! What is your *last name*?")
+            user_profile['registration_step'] = 'awaiting_last_name'
+
+        elif step == 'awaiting_last_name':
+            data['last_name'] = message_text.strip()
+            send_whatsapp_message(user_id, "Got it. What is your *date of birth*?\n\nPlease use DD/MM/YYYY format (e.g., 25/12/1998).")
+            user_profile['registration_step'] = 'awaiting_dob'
+
+        elif step == 'awaiting_dob':
+            age = calculate_age(message_text.strip())
+            if not age:
+                send_whatsapp_message(user_id, "That doesn't look right. Please enter your date of birth in DD/MM/YYYY format.")
+            else:
+                data['dob'] = message_text.strip()
+                data['age'] = age
+                send_whatsapp_message(user_id, "What is your *gender*? (Male / Female)")
+                user_profile['registration_step'] = 'awaiting_gender'
+        
+        elif step == 'awaiting_gender':
+            if message_text_lower not in ['male', 'female']:
+                send_whatsapp_message(user_id, "Please just answer with *Male* or *Female*.")
+            else:
+                data['gender'] = message_text.strip().capitalize()
+                send_whatsapp_message(user_id, "Thanks. Now, please enter your *ID or Passport number*.")
+                user_profile['registration_step'] = 'awaiting_id_passport'
+
+        elif step == 'awaiting_id_passport':
+            data['id_passport'] = message_text.strip()
+            send_whatsapp_message(user_id, "Please enter your *phone number* in international format (e.g., +263771234567).")
+            user_profile['registration_step'] = 'awaiting_phone_number'
+
+        elif step == 'awaiting_phone_number':
+            if not re.match(r'^\+\d{9,}$', message_text.strip()):
+                 send_whatsapp_message(user_id, "Hmm, that doesn't seem like a valid international phone number. Please try again (e.g., `+263771234567`).")
+            else:
+                data['phone'] = message_text.strip()
+                send_whatsapp_message(user_id, "Are you saved? (Please answer *Yes* or *No*)")
+                user_profile['registration_step'] = 'awaiting_salvation_status'
+        
+        elif step == 'awaiting_salvation_status':
+            if message_text_lower not in ['yes', 'no']:
+                send_whatsapp_message(user_id, "Please just answer *Yes* or *No*.")
+            else:
+                data['salvation_status'] = message_text.strip().capitalize()
+                send_whatsapp_message(user_id, "How many dependents (e.g., children) will be attending with you? (Enter 0 if none)")
+                user_profile['registration_step'] = 'awaiting_dependents'
+
+        elif step == 'awaiting_dependents':
+            if not message_text.strip().isdigit():
+                send_whatsapp_message(user_id, "Please enter a number (e.g., 0, 1, 2).")
+            else:
+                data['dependents'] = message_text.strip()
+                send_whatsapp_message(user_id, "Who is your *next of kin*? (Please provide their full name).")
+                user_profile['registration_step'] = 'awaiting_nok_name'
+        
+        elif step == 'awaiting_nok_name':
+            data['nok_name'] = message_text.strip()
+            send_whatsapp_message(user_id, "What is your *next of kin's phone number*? (International format, e.g., +263771234567).")
+            user_profile['registration_step'] = 'awaiting_nok_phone'
+
+        elif step == 'awaiting_nok_phone':
+            if not re.match(r'^\+\d{9,}$', message_text.strip()):
+                 send_whatsapp_message(user_id, "That doesn't look like a valid phone number. Please provide the next of kin's number in international format.")
+            else:
+                data['nok_phone'] = message_text.strip()
+                send_whatsapp_message(user_id, "The camp runs from Dec 7 to Dec 21, 2025.\n\nWhat is your *arrival date*? (e.g., Dec 7)")
+                user_profile['registration_step'] = 'awaiting_camp_start_date'
+        
+        elif step == 'awaiting_camp_start_date':
+            data['camp_start'] = message_text.strip()
+            send_whatsapp_message(user_id, "And what is your *departure date*? (e.g., Dec 21)")
+            user_profile['registration_step'] = 'awaiting_camp_end_date'
+
+        elif step == 'awaiting_camp_end_date':
+            data['camp_end'] = message_text.strip()
+            
+            confirmation_message = (
+                "📝 *Please confirm your details:*\n\n"
+                f"*Name:* {data.get('first_name', '')} {data.get('last_name', '')}\n"
+                f"*Gender:* {data.get('gender', '')}\n"
+                f"*Date of Birth:* {data.get('dob', '')} (Age: {data.get('age', 'N/A')})\n"
+                f"*ID/Passport:* {data.get('id_passport', '')}\n"
+                f"*Phone:* {data.get('phone', '')}\n\n"
+                f"*Salvation Status:* {data.get('salvation_status', '')}\n"
+                f"*Dependents Attending:* {data.get('dependents', '0')}\n\n"
+                f"*Next of Kin:* {data.get('nok_name', '')}\n"
+                f"*NOK Phone:* {data.get('nok_phone', '')}\n\n"
+                f"*Camp Stay:* {data.get('camp_start', '')} to {data.get('camp_end', '')}\n\n"
+                "Is everything correct? Type *confirm* to submit, or *restart* to enter your details again."
+            )
+            send_whatsapp_message(user_id, confirmation_message)
+            user_profile['registration_step'] = 'awaiting_confirmation'
+
+        elif step == 'awaiting_confirmation':
+            if message_text_lower == 'confirm':
+                send_whatsapp_message(user_id, "Thank you! Submitting your registration...")
+                row = [
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    data.get('first_name', ''), data.get('last_name', ''),
+                    data.get('dob', ''), data.get('age', ''), data.get('gender', ''),
+                    data.get('id_passport', ''), data.get('phone', ''),
+                    data.get('salvation_status', ''), data.get('dependents', ''),
+                    data.get('nok_name', ''), data.get('nok_phone', ''),
+                    f"{data.get('camp_start', '')} to {data.get('camp_end', '')}"
+                ]
+                
+                success = append_to_google_sheet(row)
+                
+                if success:
+                    send_whatsapp_message(user_id, "✅ Registration successful! We look forward to seeing you at the camp.")
+                else:
+                    send_whatsapp_message(user_id, "⚠️ There was a problem submitting your registration. Please contact an administrator.")
+                
+                user_profile = {}
+                if user_id in users: del users[user_id]
+            
+            elif message_text_lower == 'restart':
+                user_profile['registration_data'] = {}
+                user_profile['registration_step'] = 'start'
+                handle_bot_logic(user_id, message_text)
+                return
+            else:
+                send_whatsapp_message(user_id, "Please type *confirm* or *restart*.")
 
     elif user_profile.get('mode') == 'hymnbook':
         if 'hymnbook' not in user_profile:
@@ -498,4 +650,4 @@ def whatsapp_webhook():
 
 @app.route('/')
 def health_check():
-    return "SundayBot with Lessons, Hymns, and Bible Lookup is running!", 200
+    return "SundayBot with Camp Registration is running!", 200
