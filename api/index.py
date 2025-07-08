@@ -29,7 +29,6 @@ WHATSAPP_TOKEN = os.environ.get('WHATSAPP_TOKEN')
 PHONE_NUMBER_ID = os.environ.get('PHONE_NUMBER_ID')
 
 GOOGLE_CREDENTIALS_JSON = os.environ.get('GOOGLE_CREDENTIALS_JSON')
-# FIX: Renamed for clarity and added a new variable for the Youth Camp sheet.
 ANNUAL_CAMP_SHEET_NAME = os.environ.get('ANNUAL_CAMP_SHEET_NAME', 'Camp Registrations 2025')
 YOUTH_CAMP_SHEET_NAME = os.environ.get('YOUTH_CAMP_SHEET_NAME', 'Youths Camp Registrations 2025')
 
@@ -65,7 +64,6 @@ DEPARTMENTS = {
 
 # --- 3. HELPER & FORMATTING FUNCTIONS ---
 
-# FIX: Function now accepts sheet_name to write to different sheets.
 def append_to_google_sheet(data_row, sheet_name):
     if not GOOGLE_CREDENTIALS_JSON:
         print("ERROR: Google credentials JSON not set in environment variables.")
@@ -81,6 +79,32 @@ def append_to_google_sheet(data_row, sheet_name):
     except Exception as e:
         print(f"Error appending to Google Sheet: {e}")
         return False
+
+# FIX: New function to read from a Google Sheet and check registration status.
+def check_registration_status(phone_number, sheet_name):
+    if not GOOGLE_CREDENTIALS_JSON:
+        print("ERROR: Google credentials JSON not set in environment variables.")
+        return None
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+        sheet = client.open(sheet_name).sheet1
+        
+        # We need to add '+' to the user's WhatsApp number to match the stored format
+        user_phone_international = f"+{phone_number}"
+        
+        # Get all records and find the user
+        records = sheet.get_all_records()
+        for record in records:
+            # Assuming the column header in your sheet is 'Phone Number'
+            if record.get('Phone Number') == user_phone_international:
+                return record  # Return the found user's data
+        return None # User not found
+    except Exception as e:
+        print(f"Error checking registration in Google Sheet: {e}")
+        return None
 
 def calculate_age(dob_string):
     try:
@@ -172,6 +196,26 @@ def format_hymn(hymn):
 
 # ... (lesson formatting functions are unchanged) ...
 
+# FIX: New function to format the registration details for a status check.
+def format_registration_details(data, camp_name):
+    message = (
+        f"✅ *You are registered for the {camp_name}!* ✅\n\n"
+        "Here are the details we have on file:\n\n"
+        f"*Name:* {data.get('First Name', '')} {data.get('Last Name', '')}\n"
+        f"*Gender:* {data.get('Gender', '')}\n"
+        f"*Date of Birth:* {data.get('Date of Birth', '')} (Age: {data.get('Age', 'N/A')})\n"
+        f"*ID/Passport:* {data.get('ID or Passport Number', '')}\n"
+        f"*Phone:* {data.get('Phone Number', '')}\n\n"
+        f"*Salvation Status:* {data.get('Salvation Status', '')}\n"
+        f"*Dependents Attending:* {data.get('Attending Dependents', '0')}\n"
+        f"*Volunteering:* {data.get('Volunteer Status', '')}"
+        f"{' (' + data.get('Volunteer Department', '') + ')' if data.get('Volunteer Status') == 'Yes' else ''}\n\n"
+        f"*Next of Kin:* {data.get('Next of Kin Name', '')}\n"
+        f"*NOK Phone:* {data.get('Next of Kin Phone', '')}\n\n"
+        f"*Camp Stay:* {data.get('Camp Stay', '')}"
+    )
+    return message
+
 def get_ai_response(question, context):
     if not gemini_model: return "Sorry, the AI thinking module is currently unavailable."
     prompt = ( "You are a friendly and helpful Sunday School assistant. Your answers must be based *only* on the provided lesson text (the context). If the answer is not in the text, say that you cannot answer based on the provided material. Keep your answers concise and easy to understand.\n\n" f"--- LESSON CONTEXT ---\n{context}\n\n" f"--- USER QUESTION ---\n{question}" )
@@ -182,7 +226,6 @@ def get_ai_response(question, context):
         print(f"Google Gemini API Error: {e}")
         return "I'm having a little trouble thinking right now. Please try again in a moment."
 
-
 # --- MAIN BOT LOGIC HANDLER ---
 def handle_bot_logic(user_id, message_text):
     user_file = get_user_file_path()
@@ -191,14 +234,14 @@ def handle_bot_logic(user_id, message_text):
     user_profile = users.get(user_id, {})
     original_profile_state = json.dumps(user_profile)
 
-    # FIX: Expanded and reordered main menu for two camp options.
     main_menu_text = (
         "Welcome! 🙏\n\nPlease choose a section:\n\n"
         "*1.* Weekly Lessons\n"
         "*2.* Hymnbook\n"
         "*3.* Bible Lookup\n"
         "*4.* 2025 Regional Youths Camp Registration\n"
-        "*5.* 2025 Annual Camp Registration"
+        "*5.* 2025 Annual Camp Registration\n"
+        "*6.* Check Registration"
     )
 
     if message_text_lower == 'reset':
@@ -214,32 +257,30 @@ def handle_bot_logic(user_id, message_text):
         elif message_text_lower == '3': user_profile['mode'] = 'bible'
         elif message_text_lower == '4':
             user_profile['mode'] = 'camp_registration'
-            user_profile['registration_type'] = 'youths' # Set type for Youths Camp
+            user_profile['registration_type'] = 'youths'
         elif message_text_lower == '5':
             user_profile['mode'] = 'camp_registration'
-            user_profile['registration_type'] = 'annual' # Set type for Annual Camp
+            user_profile['registration_type'] = 'annual'
+        elif message_text_lower == '6':
+            user_profile['mode'] = 'check_registration'
         else:
             send_whatsapp_message(user_id, main_menu_text)
             return
 
-    # --- Mode Handler: Lessons ---
+    # --- Mode Handlers ---
     if user_profile.get('mode') == 'lessons':
         # ... (Lesson logic remains unchanged) ...
         pass
         
-    # --- Mode Handler: Camp Registration ---
     elif user_profile.get('mode') == 'camp_registration':
         step = user_profile.get('registration_step', 'start')
         data = user_profile.setdefault('registration_data', {})
-        reg_type = user_profile.get('registration_type', 'annual') # Default to annual just in case
+        reg_type = user_profile.get('registration_type', 'annual')
 
-        # FIX: Define dynamic camp details based on registration type
         if reg_type == 'youths':
-            camp_name = "2025 Regional Youths Camp"
-            camp_dates_text = "The camp runs from Aug 17 to Aug 24, 2025."
+            camp_name, camp_dates_text = "2025 Regional Youths Camp", "The camp runs from Aug 17 to Aug 24, 2025."
         else:
-            camp_name = "2025 Annual Camp"
-            camp_dates_text = "The camp runs from Dec 7 to Dec 21, 2025."
+            camp_name, camp_dates_text = "2025 Annual Camp", "The camp runs from Dec 7 to Dec 21, 2025."
         
         if step == 'start':
             send_whatsapp_message(user_id, f"🏕️ *{camp_name} Registration*\n\nLet's get you registered. I'll ask you a few questions one by one. You can type `reset` at any time to cancel.\n\nFirst, what is your *first name*?")
@@ -260,8 +301,7 @@ def handle_bot_logic(user_id, message_text):
             if not age:
                 send_whatsapp_message(user_id, "That doesn't look right. Please enter your date of birth in DD/MM/YYYY format.")
             else:
-                data['dob'] = message_text.strip()
-                data['age'] = age
+                data['dob'], data['age'] = message_text.strip(), age
                 send_whatsapp_message(user_id, "What is your *gender*? (Male / Female)")
                 user_profile['registration_step'] = 'awaiting_gender'
         
@@ -363,27 +403,56 @@ def handle_bot_logic(user_id, message_text):
                     data.get('nok_name', ''), data.get('nok_phone', ''),
                     f"{data.get('camp_start', '')} to {data.get('camp_end', '')}"
                 ]
-                
-                # FIX: Choose the correct sheet to write to
                 sheet_to_use = YOUTH_CAMP_SHEET_NAME if reg_type == 'youths' else ANNUAL_CAMP_SHEET_NAME
                 success = append_to_google_sheet(row, sheet_to_use)
-                
                 if success:
                     send_whatsapp_message(user_id, f"✅ Registration successful for the {camp_name}! We look forward to seeing you.")
                 else:
                     send_whatsapp_message(user_id, "⚠️ There was a problem submitting your registration. Please contact an administrator.")
-                
-                user_profile = {}
+                user_profile = {} # Reset state
                 if user_id in users: del users[user_id]
             
             elif message_text_lower == 'restart':
-                user_profile['registration_data'] = {}
                 user_profile['registration_step'] = 'start'
-                handle_bot_logic(user_id, message_text) # Rerun from the start of registration
+                handle_bot_logic(user_id, message_text)
                 return
             else:
                 send_whatsapp_message(user_id, "Please type *confirm* or *restart*.")
 
+    # FIX: New mode for checking registration status
+    elif user_profile.get('mode') == 'check_registration':
+        step = user_profile.get('check_step', 'start')
+        if step == 'start':
+            send_whatsapp_message(user_id, "Which camp registration would you like to check?\n\n*1.* 2025 Regional Youths Camp\n*2.* 2025 Annual Camp")
+            user_profile['check_step'] = 'awaiting_camp_choice'
+        
+        elif step == 'awaiting_camp_choice':
+            sheet_to_check = None
+            camp_name = None
+            if message_text_lower == '1':
+                sheet_to_check = YOUTH_CAMP_SHEET_NAME
+                camp_name = "2025 Regional Youths Camp"
+            elif message_text_lower == '2':
+                sheet_to_check = ANNUAL_CAMP_SHEET_NAME
+                camp_name = "2025 Annual Camp"
+            else:
+                send_whatsapp_message(user_id, "Invalid selection. Please type *1* for Youths Camp or *2* for Annual Camp.")
+                return
+
+            send_whatsapp_message(user_id, f"🔍 Checking your registration for the *{camp_name}*...")
+            registration_data = check_registration_status(user_id, sheet_to_check)
+            
+            if registration_data:
+                status_message = format_registration_details(registration_data, camp_name)
+                send_whatsapp_message(user_id, status_message)
+            else:
+                send_whatsapp_message(user_id, f"❌ We couldn't find a registration for your phone number for the *{camp_name}*.\n\nIf you believe this is an error, please contact an administrator. Otherwise, you can register from the main menu.")
+
+            # Reset the user's state after the check is complete
+            user_profile = {}
+            if user_id in users: del users[user_id]
+            send_whatsapp_message(user_id, "You are now back at the main menu. Type `reset` to see all options.")
+    
     # ... (other modes like hymnbook, bible, etc.) ...
     
     if json.dumps(user_profile) != original_profile_state:
@@ -448,4 +517,4 @@ def whatsapp_webhook():
 
 @app.route('/')
 def health_check():
-    return "SundayBot with Camp Registration is running!", 200
+    return "SundayBot with Camp Registration & Check is running!", 200
