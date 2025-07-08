@@ -34,7 +34,6 @@ YOUTH_CAMP_SHEET_NAME = os.environ.get('YOUTH_CAMP_SHEET_NAME', 'Youths Camp Reg
 ANCHOR_DATE = date(2024, 8, 21)
 PRIMARY_PALS_ANCHOR_DATE = date(2024, 9, 1)
 
-# --- REVERTED: Using the temporary file system for user state ---
 USERS_FILE = 'users.json'
 HYMNBOOKS_DIR = 'hymnbooks'
 BIBLES_DIR = 'bibles'
@@ -63,6 +62,7 @@ DEPARTMENTS = {
 # --- 3. HELPER & FORMATTING FUNCTIONS ---
 
 def append_to_google_sheet(data_row, sheet_name):
+    # ... (This function is unchanged)
     if not GOOGLE_CREDENTIALS_JSON:
         print("ERROR: Google credentials JSON not set in environment variables.")
         return False
@@ -79,6 +79,7 @@ def append_to_google_sheet(data_row, sheet_name):
         return False
 
 def calculate_age(dob_string):
+    # ... (This function is unchanged)
     try:
         birth_date = datetime.strptime(dob_string, "%d/%m/%Y").date()
         today = date.today()
@@ -88,6 +89,7 @@ def calculate_age(dob_string):
         return None
         
 def get_verse_from_db(passage, db_filename):
+    # ... (This function is unchanged)
     db_path = os.path.join(os.path.dirname(__file__), BIBLES_DIR, db_filename)
     if not os.path.exists(db_path):
         return f"Sorry, the selected Bible database file ({db_filename}) is missing."
@@ -121,9 +123,7 @@ def get_verse_from_db(passage, db_filename):
         print(f"SQLite Database Error: {e}")
         return "Sorry, I'm having trouble looking up the Bible verse right now."
 
-# --- REVERTED: Re-introducing file-based helper functions ---
 def get_user_file_path():
-    # In a serverless environment like Vercel, only /tmp is writeable
     return f'/tmp/{USERS_FILE}' if 'VERCEL' in os.environ else os.path.join(os.path.dirname(__file__), USERS_FILE)
 
 def load_json_file(file_path):
@@ -131,7 +131,6 @@ def load_json_file(file_path):
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        # Return a dictionary for users.json, list for lessons/hymns
         return [] if any(x in file_path for x in ['lessons', 'hymn']) else {}
 
 def save_json_file(data, file_path):
@@ -139,6 +138,7 @@ def save_json_file(data, file_path):
         json.dump(data, f, indent=4)
 
 def get_current_lesson_index(user_class):
+    # ... (This function is unchanged)
     today = date.today()
     if user_class == "Primary Pals":
         anchor_date = PRIMARY_PALS_ANCHOR_DATE
@@ -150,6 +150,7 @@ def get_current_lesson_index(user_class):
     return week_difference if week_difference >= 0 else -1
 
 def format_hymn(hymn):
+    # ... (This function is unchanged)
     if not hymn: return "Sorry, I couldn't find a hymn with that number in your selected hymnbook."
     title, hymn_number = hymn.get('title', 'No Title'), hymn.get('number', '#')
     message = f"🎶 *Hymn #{hymn_number}: {title}*\n\n"
@@ -168,7 +169,23 @@ def format_hymn(hymn):
                 message += f"*{i}.*\n" + "\n".join(v_lines) + "\n\n"
     return message.strip()
 
+# --- NEW --- Helper function to format the weekly lesson
+def format_lesson(lesson):
+    if not lesson: return "Lesson details could not be found."
+    title = lesson.get('title', 'No Title')
+    lesson_num = lesson.get('lesson', '#')
+    memory_verse = lesson.get('memory_verse', 'N/A')
+    main_text = "\n".join(lesson.get('text', []))
+
+    message = (
+        f"📖 *Lesson {lesson_num}: {title}*\n\n"
+        f"📌 *Memory Verse:*\n_{memory_verse}_\n\n"
+        f"📝 *Lesson Text:*\n{main_text}"
+    )
+    return message
+
 def get_ai_response(question, context):
+    # ... (This function is unchanged)
     if not gemini_model: return "Sorry, the AI thinking module is currently unavailable."
     prompt = ( "You are a friendly and helpful Sunday School assistant. Your answers must be based *only* on the provided lesson text (the context). If the answer is not in the text, say that you cannot answer based on the provided material. Keep your answers concise and easy to understand.\n\n" f"--- LESSON CONTEXT ---\n{context}\n\n" f"--- USER QUESTION ---\n{question}" )
     try:
@@ -181,7 +198,6 @@ def get_ai_response(question, context):
 
 # --- MAIN BOT LOGIC HANDLER ---
 def handle_bot_logic(user_id, message_text):
-    # --- REVERTED: Load user state from a JSON file ---
     user_file_path = get_user_file_path()
     users = load_json_file(user_file_path)
     
@@ -202,7 +218,15 @@ def handle_bot_logic(user_id, message_text):
         user_profile = {}
         send_whatsapp_message(user_id, f"Your session has been reset. {main_menu_text}")
         if user_id in users: del users[user_id]
-        save_json_file(users, user_file_path) # Save after removing the user
+        save_json_file(users, user_file_path)
+        return
+        
+    # --- ADDED: Consistent way to go back to main menu from any sub-section
+    if message_text_lower == 'm' and 'mode' in user_profile:
+        user_profile = {}
+        send_whatsapp_message(user_id, f"OK, returning to the main menu. {main_menu_text}")
+        if user_id in users: del users[user_id]
+        save_json_file(users, user_file_path)
         return
 
     if 'mode' not in user_profile:
@@ -219,13 +243,157 @@ def handle_bot_logic(user_id, message_text):
             send_whatsapp_message(user_id, main_menu_text)
             return
 
-    # --- Mode Handler: Lessons ---
+    # --- LOGIC FILLED IN: Mode Handler: Lessons ---
     if user_profile.get('mode') == 'lessons':
-        # ... (Lesson logic remains unchanged) ...
-        pass
+        step = user_profile.get('lesson_step', 'start')
+
+        if step == 'start':
+            class_menu = "Please select your class:\n\n"
+            for key, name in CLASSES.items():
+                class_menu += f"*{key}.* {name}\n"
+            send_whatsapp_message(user_id, class_menu.strip())
+            user_profile['lesson_step'] = 'awaiting_class_choice'
         
+        elif step == 'awaiting_class_choice':
+            if message_text_lower not in CLASSES:
+                send_whatsapp_message(user_id, "Invalid selection. Please choose a number from the list.")
+            else:
+                user_class = CLASSES[message_text_lower]
+                user_profile['lesson_class'] = user_class
+                
+                # Determine which lesson file to load
+                lesson_files = {
+                    "Beginners": LESSONS_FILE_BEGINNERS,
+                    "Primary Pals": LESSONS_FILE_PRIMARY_PALS,
+                    "Answer": LESSONS_FILE_ANSWER,
+                    "Search": LESSONS_FILE_SEARCH
+                }
+                lesson_file = lesson_files.get(user_class)
+                lesson_file_path = os.path.join(os.path.dirname(__file__), lesson_file)
+                all_lessons = load_json_file(lesson_file_path)
+
+                lesson_index = get_current_lesson_index(user_class)
+
+                if 0 <= lesson_index < len(all_lessons):
+                    current_lesson = all_lessons[lesson_index]
+                    user_profile['current_lesson_data'] = current_lesson # Store lesson for AI context
+                    
+                    lesson_action_menu = (
+                        f"This week's lesson for the *{user_class}* class is: *{current_lesson.get('title', 'N/A')}*\n\n"
+                        "What would you like to do?\n"
+                        "*1.* Read the full lesson\n"
+                        "*2.* Ask a question about the lesson\n\n"
+                        "Type *m* to return to the main menu."
+                    )
+                    send_whatsapp_message(user_id, lesson_action_menu)
+                    user_profile['lesson_step'] = 'awaiting_lesson_action'
+                else:
+                    send_whatsapp_message(user_id, "Sorry, I couldn't find the current lesson for your class. Please contact an administrator.")
+                    user_profile = {} # Reset
+        
+        elif step == 'awaiting_lesson_action':
+            if message_text_lower == '1': # Read lesson
+                lesson_data = user_profile.get('current_lesson_data')
+                formatted_lesson = format_lesson(lesson_data)
+                send_whatsapp_message(user_id, formatted_lesson)
+                # After sending, repeat the menu
+                lesson_action_menu = (
+                    "What would you like to do next?\n"
+                    "*1.* Read the full lesson again\n"
+                    "*2.* Ask a question about the lesson\n\n"
+                    "Type *m* to return to the main menu."
+                )
+                send_whatsapp_message(user_id, lesson_action_menu)
+            elif message_text_lower == '2': # Ask question
+                send_whatsapp_message(user_id, "OK, please type your question about the lesson.")
+                user_profile['lesson_step'] = 'awaiting_ai_question'
+            else:
+                send_whatsapp_message(user_id, "Invalid choice. Please enter *1* or *2*.")
+        
+        elif step == 'awaiting_ai_question':
+            question = message_text
+            lesson_data = user_profile.get('current_lesson_data')
+            context = format_lesson(lesson_data) # Use the formatted lesson as context
+            
+            ai_answer = get_ai_response(question, context)
+            send_whatsapp_message(user_id, f"🤔 *Answer:*\n{ai_answer}")
+            
+            # Return to the action menu
+            user_profile['lesson_step'] = 'awaiting_lesson_action'
+            lesson_action_menu = (
+                "You can ask another question, or choose an option:\n"
+                "*1.* Read the full lesson\n"
+                "*2.* Ask another question\n\n"
+                "Type *m* to return to the main menu."
+            )
+            send_whatsapp_message(user_id, lesson_action_menu)
+
+    # --- LOGIC FILLED IN: Mode Handler: Hymnbook ---
+    elif user_profile.get('mode') == 'hymnbook':
+        step = user_profile.get('hymn_step', 'start')
+
+        if step == 'start':
+            hymnbook_menu = "Please select a hymnbook:\n\n"
+            for key, book in HYMNBOOKS.items():
+                hymnbook_menu += f"*{key}.* {book['name']}\n"
+            send_whatsapp_message(user_id, hymnbook_menu.strip())
+            user_profile['hymn_step'] = 'awaiting_hymnbook_choice'
+            
+        elif step == 'awaiting_hymnbook_choice':
+            if message_text_lower not in HYMNBOOKS:
+                send_whatsapp_message(user_id, "Invalid selection. Please choose a number from the list.")
+            else:
+                chosen_book = HYMNBOOKS[message_text_lower]
+                user_profile['hymnbook_file'] = chosen_book['file']
+                send_whatsapp_message(user_id, f"Great! You've selected *{chosen_book['name']}*. Please enter a hymn number.\n\nType *m* to return to the main menu.")
+                user_profile['hymn_step'] = 'awaiting_hymn_number'
+                
+        elif step == 'awaiting_hymn_number':
+            hymn_number = message_text.strip()
+            if not hymn_number.isdigit():
+                send_whatsapp_message(user_id, "Please enter a valid number.")
+            else:
+                hymn_file_path = os.path.join(os.path.dirname(__file__), HYMNBOOKS_DIR, user_profile['hymnbook_file'])
+                all_hymns = load_json_file(hymn_file_path)
+                
+                found_hymn = next((h for h in all_hymns if str(h.get('number')) == hymn_number), None)
+                
+                if found_hymn:
+                    send_whatsapp_message(user_id, format_hymn(found_hymn))
+                else:
+                    send_whatsapp_message(user_id, f"Sorry, I couldn't find hymn #{hymn_number} in this hymnbook.")
+                
+                send_whatsapp_message(user_id, "You can enter another hymn number, or type *m* to go back.")
+
+    # --- LOGIC FILLED IN: Mode Handler: Bible ---
+    elif user_profile.get('mode') == 'bible':
+        step = user_profile.get('bible_step', 'start')
+
+        if step == 'start':
+            bible_menu = "Please select a Bible version:\n\n"
+            for key, bible in BIBLES.items():
+                bible_menu += f"*{key}.* {bible['name']}\n"
+            send_whatsapp_message(user_id, bible_menu.strip())
+            user_profile['bible_step'] = 'awaiting_bible_choice'
+            
+        elif step == 'awaiting_bible_choice':
+            if message_text_lower not in BIBLES:
+                send_whatsapp_message(user_id, "Invalid selection. Please choose a number from the list.")
+            else:
+                chosen_bible = BIBLES[message_text_lower]
+                user_profile['bible_file'] = chosen_bible['file']
+                send_whatsapp_message(user_id, f"You've selected the *{chosen_bible['name']}*. Please enter a passage to look up (e.g., John 3:16).\n\nType *m* to return to the main menu.")
+                user_profile['bible_step'] = 'awaiting_passage'
+
+        elif step == 'awaiting_passage':
+            passage = message_text.strip()
+            verse_text = get_verse_from_db(passage, user_profile['bible_file'])
+            send_whatsapp_message(user_id, verse_text)
+            send_whatsapp_message(user_id, "You can enter another passage, or type *m* to go back.")
+
     # --- Mode Handler: Camp Registration ---
     elif user_profile.get('mode') == 'camp_registration':
+        # ... (This logic is unchanged and complete)
         step = user_profile.get('registration_step', 'start')
         data = user_profile.setdefault('registration_data', {})
         reg_type = user_profile.get('registration_type', 'annual')
@@ -241,7 +409,6 @@ def handle_bot_logic(user_id, message_text):
             send_whatsapp_message(user_id, f"🏕️ *{camp_name} Registration*\n\nLet's get you registered. I'll ask you a few questions one by one. You can type `reset` at any time to cancel.\n\nFirst, what is your *first name*?")
             user_profile['registration_step'] = 'awaiting_first_name'
         
-        # ... [The entire registration logic chain remains exactly the same as your original code] ...
         elif step == 'awaiting_first_name':
             data['first_name'] = message_text.strip()
             send_whatsapp_message(user_id, "Great! What is your *last name*?")
@@ -379,13 +546,13 @@ def handle_bot_logic(user_id, message_text):
                 return
             else:
                 send_whatsapp_message(user_id, "Please type *confirm* or *restart*.")
-    
-    # --- REVERTED: Save user state to a JSON file ---
+
     if json.dumps(user_profile) != original_profile_state:
         users[user_id] = user_profile
         save_json_file(users, user_file_path)
 
 def _send_confirmation_message(user_id, data, camp_name):
+    # ... (This function is unchanged)
     confirmation_message = (
         f"📝 *Please confirm your details for the {camp_name}:*\n\n"
         f"*Name:* {data.get('first_name', '')} {data.get('last_name', '')}\n"
@@ -406,6 +573,7 @@ def _send_confirmation_message(user_id, data, camp_name):
 
 
 def send_whatsapp_message(recipient_id, message_text):
+    # ... (This function is unchanged)
     if not all([WHATSAPP_TOKEN, PHONE_NUMBER_ID]):
         print("ERROR: WhatsApp credentials not set.")
         return
@@ -421,6 +589,7 @@ def send_whatsapp_message(recipient_id, message_text):
 
 @app.route('/whatsapp', methods=['GET', 'POST'])
 def whatsapp_webhook():
+    # ... (This function is unchanged)
     if request.method == 'GET':
         if request.args.get('hub.verify_token') == VERIFY_TOKEN:
             return request.args.get('hub.challenge'), 200
@@ -442,4 +611,5 @@ def whatsapp_webhook():
 
 @app.route('/')
 def health_check():
+    # ... (This function is unchanged)
     return "SundayBot with Camp Registration is running!", 200
