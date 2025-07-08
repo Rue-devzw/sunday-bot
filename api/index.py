@@ -9,9 +9,10 @@ import re
 from flask import Flask, request
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta, MO
-# Added gspread for Google Sheets integration
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+# --- MODIFIED: Added redis for Vercel KV ---
+import redis
 
 # --- 1. INITIALIZE FLASK & API CLIENTS ---
 app = Flask(__name__)
@@ -23,22 +24,33 @@ except Exception as e:
     print(f"Error initializing Gemini client: {e}")
     gemini_model = None
 
+# --- MODIFIED: Vercel KV Client Initialization ---
+kv_client = None
+KV_URL = os.environ.get('KV_URL')
+if KV_URL:
+    try:
+        kv_client = redis.from_url(KV_URL)
+        print("Successfully connected to Vercel KV.")
+    except Exception as e:
+        print(f"FATAL: Could not connect to Vercel KV. Error: {e}")
+else:
+    print("WARNING: KV_URL environment variable not set. User state will not be persistent.")
+
+
 # --- 2. CONFIGURATION & ENVIRONMENT VARIABLES ---
 VERIFY_TOKEN = os.environ.get('VERIFY_TOKEN')
 WHATSAPP_TOKEN = os.environ.get('WHATSAPP_TOKEN')
 PHONE_NUMBER_ID = os.environ.get('PHONE_NUMBER_ID')
 
 GOOGLE_CREDENTIALS_JSON = os.environ.get('GOOGLE_CREDENTIALS_JSON')
-# FIX: Renamed for clarity and added a new variable for the Youth Camp sheet.
 ANNUAL_CAMP_SHEET_NAME = os.environ.get('ANNUAL_CAMP_SHEET_NAME', 'Camp Registrations 2025')
 YOUTH_CAMP_SHEET_NAME = os.environ.get('YOUTH_CAMP_SHEET_NAME', 'Youths Camp Registrations 2025')
 
-# Anchor date for Beginners, Answer, and Search classes.
 ANCHOR_DATE = date(2024, 8, 21)
-# A separate anchor date specifically for the Primary Pals curriculum.
 PRIMARY_PALS_ANCHOR_DATE = date(2024, 9, 1)
 
-USERS_FILE = 'users.json'
+# --- REMOVED: USERS_FILE is no longer needed ---
+# USERS_FILE = 'users.json'
 HYMNBOOKS_DIR = 'hymnbooks'
 BIBLES_DIR = 'bibles'
 LESSONS_FILE_SEARCH = 'search_lessons.json'
@@ -65,7 +77,6 @@ DEPARTMENTS = {
 
 # --- 3. HELPER & FORMATTING FUNCTIONS ---
 
-# FIX: Function now accepts sheet_name to write to different sheets.
 def append_to_google_sheet(data_row, sheet_name):
     if not GOOGLE_CREDENTIALS_JSON:
         print("ERROR: Google credentials JSON not set in environment variables.")
@@ -90,8 +101,7 @@ def calculate_age(dob_string):
         return age
     except ValueError:
         return None
-        
-# ... other helper functions ...
+
 def get_verse_from_db(passage, db_filename):
     db_path = os.path.join(os.path.dirname(__file__), BIBLES_DIR, db_filename)
     if not os.path.exists(db_path):
@@ -126,19 +136,19 @@ def get_verse_from_db(passage, db_filename):
         print(f"SQLite Database Error: {e}")
         return "Sorry, I'm having trouble looking up the Bible verse right now."
 
-def get_user_file_path():
-    return f'/tmp/{USERS_FILE}' if 'VERCEL' in os.environ else os.path.join(os.path.dirname(__file__), USERS_FILE)
+# --- REMOVED: File-based functions are no longer needed for user state ---
+# def get_user_file_path():
+# def load_json_data(file_path): # Note: This is still used for lessons/hymns
+# def save_json_data(data, file_path):
 
+# --- MODIFIED: Kept load_json_data for non-user data (lessons, hymns) ---
 def load_json_data(file_path):
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return [] if any(x in file_path for x in ['lessons', 'hymn']) else {}
-
-def save_json_data(data, file_path):
-    with open(file_path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=4)
+        # Return a list for lessons/hymns, which is the expected format
+        return []
 
 def get_current_lesson_index(user_class):
     today = date.today()
@@ -170,8 +180,6 @@ def format_hymn(hymn):
                 message += f"*{i}.*\n" + "\n".join(v_lines) + "\n\n"
     return message.strip()
 
-# ... (lesson formatting functions are unchanged) ...
-
 def get_ai_response(question, context):
     if not gemini_model: return "Sorry, the AI thinking module is currently unavailable."
     prompt = ( "You are a friendly and helpful Sunday School assistant. Your answers must be based *only* on the provided lesson text (the context). If the answer is not in the text, say that you cannot answer based on the provided material. Keep your answers concise and easy to understand.\n\n" f"--- LESSON CONTEXT ---\n{context}\n\n" f"--- USER QUESTION ---\n{question}" )
@@ -185,13 +193,22 @@ def get_ai_response(question, context):
 
 # --- MAIN BOT LOGIC HANDLER ---
 def handle_bot_logic(user_id, message_text):
-    user_file = get_user_file_path()
-    users = load_json_data(user_file)
-    message_text_lower = message_text.lower().strip()
-    user_profile = users.get(user_id, {})
-    original_profile_state = json.dumps(user_profile)
+    # --- MODIFIED: Load user state from Vercel KV ---
+    if not kv_client:
+        print("CRITICAL: kv_client not initialized. Cannot handle logic.")
+        send_whatsapp_message(user_id, "I'm sorry, I'm having trouble with my memory right now. Please try again in a few moments.")
+        return
 
-    # FIX: Expanded and reordered main menu for two camp options.
+    try:
+        user_profile_json = kv_client.get(user_id)
+        user_profile = json.loads(user_profile_json) if user_profile_json else {}
+    except Exception as e:
+        print(f"Error loading user profile from KV for user {user_id}: {e}")
+        user_profile = {} # Start fresh if there's a problem
+
+    original_profile_state = json.dumps(user_profile, sort_keys=True)
+    message_text_lower = message_text.lower().strip()
+
     main_menu_text = (
         "Welcome! 🙏\n\nPlease choose a section:\n\n"
         "*1.* Weekly Lessons\n"
@@ -201,11 +218,11 @@ def handle_bot_logic(user_id, message_text):
         "*5.* 2025 Annual Camp Registration"
     )
 
+    # --- MODIFIED: Reset command now uses kv_client.delete ---
     if message_text_lower == 'reset':
         user_profile = {}
         send_whatsapp_message(user_id, f"Your session has been reset. {main_menu_text}")
-        if user_id in users: del users[user_id]
-        save_json_data(users, user_file)
+        kv_client.delete(user_id) # Delete the key from the database
         return
 
     if 'mode' not in user_profile:
@@ -214,10 +231,10 @@ def handle_bot_logic(user_id, message_text):
         elif message_text_lower == '3': user_profile['mode'] = 'bible'
         elif message_text_lower == '4':
             user_profile['mode'] = 'camp_registration'
-            user_profile['registration_type'] = 'youths' # Set type for Youths Camp
+            user_profile['registration_type'] = 'youths'
         elif message_text_lower == '5':
             user_profile['mode'] = 'camp_registration'
-            user_profile['registration_type'] = 'annual' # Set type for Annual Camp
+            user_profile['registration_type'] = 'annual'
         else:
             send_whatsapp_message(user_id, main_menu_text)
             return
@@ -231,9 +248,8 @@ def handle_bot_logic(user_id, message_text):
     elif user_profile.get('mode') == 'camp_registration':
         step = user_profile.get('registration_step', 'start')
         data = user_profile.setdefault('registration_data', {})
-        reg_type = user_profile.get('registration_type', 'annual') # Default to annual just in case
+        reg_type = user_profile.get('registration_type', 'annual')
 
-        # FIX: Define dynamic camp details based on registration type
         if reg_type == 'youths':
             camp_name = "2025 Regional Youths Camp"
             camp_dates_text = "The camp runs from Aug 17 to Aug 24, 2025."
@@ -245,6 +261,7 @@ def handle_bot_logic(user_id, message_text):
             send_whatsapp_message(user_id, f"🏕️ *{camp_name} Registration*\n\nLet's get you registered. I'll ask you a few questions one by one. You can type `reset` at any time to cancel.\n\nFirst, what is your *first name*?")
             user_profile['registration_step'] = 'awaiting_first_name'
         
+        # ... [The entire registration logic chain remains exactly the same] ...
         elif step == 'awaiting_first_name':
             data['first_name'] = message_text.strip()
             send_whatsapp_message(user_id, "Great! What is your *last name*?")
@@ -364,7 +381,6 @@ def handle_bot_logic(user_id, message_text):
                     f"{data.get('camp_start', '')} to {data.get('camp_end', '')}"
                 ]
                 
-                # FIX: Choose the correct sheet to write to
                 sheet_to_use = YOUTH_CAMP_SHEET_NAME if reg_type == 'youths' else ANNUAL_CAMP_SHEET_NAME
                 success = append_to_google_sheet(row, sheet_to_use)
                 
@@ -373,22 +389,32 @@ def handle_bot_logic(user_id, message_text):
                 else:
                     send_whatsapp_message(user_id, "⚠️ There was a problem submitting your registration. Please contact an administrator.")
                 
+                # --- MODIFIED: Clear the profile, it will be deleted from KV at the end ---
                 user_profile = {}
-                if user_id in users: del users[user_id]
             
             elif message_text_lower == 'restart':
                 user_profile['registration_data'] = {}
                 user_profile['registration_step'] = 'start'
-                handle_bot_logic(user_id, message_text) # Rerun from the start of registration
+                handle_bot_logic(user_id, message_text)
                 return
             else:
                 send_whatsapp_message(user_id, "Please type *confirm* or *restart*.")
 
     # ... (other modes like hymnbook, bible, etc.) ...
     
-    if json.dumps(user_profile) != original_profile_state:
-        users[user_id] = user_profile
-        save_json_data(users, user_file)
+    # --- MODIFIED: Save user state to Vercel KV ---
+    # This logic replaces the old save_json_data call.
+    new_profile_state = json.dumps(user_profile, sort_keys=True)
+    if new_profile_state != original_profile_state:
+        if user_profile:
+            # If the profile has data, save it to KV.
+            # The key is the user's phone number, the value is the JSON state.
+            kv_client.set(user_id, new_profile_state)
+        else:
+            # If the profile is now empty (e.g., after 'reset' or a completed registration),
+            # delete the key from KV to clean up.
+            kv_client.delete(user_id)
+
 
 def _send_confirmation_message(user_id, data, camp_name):
     """Helper function to build and send the confirmation message."""
@@ -434,6 +460,7 @@ def whatsapp_webhook():
     if request.method == 'POST':
         data = request.get_json()
         print(f"Incoming data: {json.dumps(data, indent=2)}")
+        user_id = None
         try:
             if data and 'entry' in data:
                 for entry in data['entry']:
@@ -441,9 +468,12 @@ def whatsapp_webhook():
                         if 'messages' in change.get('value', {}):
                             for message in change['value']['messages']:
                                 if message.get('type') == 'text':
-                                    handle_bot_logic(message['from'], message['text']['body'])
+                                    user_id = message['from'] # Capture user_id for error reporting
+                                    handle_bot_logic(user_id, message['text']['body'])
         except Exception as e:
-            print(f"Error processing webhook message: {e}")
+            print(f"FATAL Error processing webhook message: {e}")
+            if user_id:
+                send_whatsapp_message(user_id, "I'm sorry, an unexpected error occurred. Please type `reset` and try again.")
         return 'OK', 200
 
 @app.route('/')
