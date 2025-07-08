@@ -11,8 +11,21 @@ from datetime import datetime, date
 from dateutil.relativedelta import relativedelta, MO
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-# --- MODIFIED: Added redis for Vercel KV ---
 import redis
+
+# --- DIAGNOSTIC STEP: Print all available environment variables to Vercel logs ---
+print(f"--- VERCEL ENV VARS ---\n{os.environ}\n----------------------")
+
+# --- MODIFIED: Added support for local .env file for testing ---
+try:
+    from dotenv import load_dotenv
+    # This will load variables from a .env file if it exists.
+    # It does nothing if the file is not found (which is expected on Vercel).
+    load_dotenv()
+    print("Dotenv loaded (if .env file exists).")
+except ImportError:
+    print("Dotenv not installed, skipping. This is normal for production.")
+
 
 # --- 1. INITIALIZE FLASK & API CLIENTS ---
 app = Flask(__name__)
@@ -24,7 +37,7 @@ except Exception as e:
     print(f"Error initializing Gemini client: {e}")
     gemini_model = None
 
-# --- MODIFIED: Vercel KV Client Initialization ---
+# --- Vercel KV Client Initialization ---
 kv_client = None
 KV_URL = os.environ.get('KV_URL')
 if KV_URL:
@@ -34,6 +47,7 @@ if KV_URL:
     except Exception as e:
         print(f"FATAL: Could not connect to Vercel KV. Error: {e}")
 else:
+    # This message is the source of the error you are seeing.
     print("WARNING: KV_URL environment variable not set. User state will not be persistent.")
 
 
@@ -49,8 +63,6 @@ YOUTH_CAMP_SHEET_NAME = os.environ.get('YOUTH_CAMP_SHEET_NAME', 'Youths Camp Reg
 ANCHOR_DATE = date(2024, 8, 21)
 PRIMARY_PALS_ANCHOR_DATE = date(2024, 9, 1)
 
-# --- REMOVED: USERS_FILE is no longer needed ---
-# USERS_FILE = 'users.json'
 HYMNBOOKS_DIR = 'hymnbooks'
 BIBLES_DIR = 'bibles'
 LESSONS_FILE_SEARCH = 'search_lessons.json'
@@ -136,18 +148,11 @@ def get_verse_from_db(passage, db_filename):
         print(f"SQLite Database Error: {e}")
         return "Sorry, I'm having trouble looking up the Bible verse right now."
 
-# --- REMOVED: File-based functions are no longer needed for user state ---
-# def get_user_file_path():
-# def load_json_data(file_path): # Note: This is still used for lessons/hymns
-# def save_json_data(data, file_path):
-
-# --- MODIFIED: Kept load_json_data for non-user data (lessons, hymns) ---
 def load_json_data(file_path):
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        # Return a list for lessons/hymns, which is the expected format
         return []
 
 def get_current_lesson_index(user_class):
@@ -193,10 +198,10 @@ def get_ai_response(question, context):
 
 # --- MAIN BOT LOGIC HANDLER ---
 def handle_bot_logic(user_id, message_text):
-    # --- MODIFIED: Load user state from Vercel KV ---
     if not kv_client:
+        # This is the line that is triggering your error message.
         print("CRITICAL: kv_client not initialized. Cannot handle logic.")
-        send_whatsapp_message(user_id, "I'm sorry, I'm having trouble with my memory right now. Please try again in a few moments.")
+        send_whatsapp_message(user_id, "I'm sorry, my memory is currently unavailable. Please contact an administrator.")
         return
 
     try:
@@ -204,7 +209,7 @@ def handle_bot_logic(user_id, message_text):
         user_profile = json.loads(user_profile_json) if user_profile_json else {}
     except Exception as e:
         print(f"Error loading user profile from KV for user {user_id}: {e}")
-        user_profile = {} # Start fresh if there's a problem
+        user_profile = {}
 
     original_profile_state = json.dumps(user_profile, sort_keys=True)
     message_text_lower = message_text.lower().strip()
@@ -218,11 +223,10 @@ def handle_bot_logic(user_id, message_text):
         "*5.* 2025 Annual Camp Registration"
     )
 
-    # --- MODIFIED: Reset command now uses kv_client.delete ---
     if message_text_lower == 'reset':
         user_profile = {}
         send_whatsapp_message(user_id, f"Your session has been reset. {main_menu_text}")
-        kv_client.delete(user_id) # Delete the key from the database
+        kv_client.delete(user_id)
         return
 
     if 'mode' not in user_profile:
@@ -242,8 +246,9 @@ def handle_bot_logic(user_id, message_text):
     # --- Mode Handler: Lessons ---
     if user_profile.get('mode') == 'lessons':
         # ... (Lesson logic remains unchanged) ...
+        # This section is currently a placeholder 'pass' in your code
         pass
-        
+
     # --- Mode Handler: Camp Registration ---
     elif user_profile.get('mode') == 'camp_registration':
         step = user_profile.get('registration_step', 'start')
@@ -261,7 +266,6 @@ def handle_bot_logic(user_id, message_text):
             send_whatsapp_message(user_id, f"🏕️ *{camp_name} Registration*\n\nLet's get you registered. I'll ask you a few questions one by one. You can type `reset` at any time to cancel.\n\nFirst, what is your *first name*?")
             user_profile['registration_step'] = 'awaiting_first_name'
         
-        # ... [The entire registration logic chain remains exactly the same] ...
         elif step == 'awaiting_first_name':
             data['first_name'] = message_text.strip()
             send_whatsapp_message(user_id, "Great! What is your *last name*?")
@@ -389,7 +393,6 @@ def handle_bot_logic(user_id, message_text):
                 else:
                     send_whatsapp_message(user_id, "⚠️ There was a problem submitting your registration. Please contact an administrator.")
                 
-                # --- MODIFIED: Clear the profile, it will be deleted from KV at the end ---
                 user_profile = {}
             
             elif message_text_lower == 'restart':
@@ -400,19 +403,12 @@ def handle_bot_logic(user_id, message_text):
             else:
                 send_whatsapp_message(user_id, "Please type *confirm* or *restart*.")
 
-    # ... (other modes like hymnbook, bible, etc.) ...
-    
-    # --- MODIFIED: Save user state to Vercel KV ---
-    # This logic replaces the old save_json_data call.
+    # --- Save user state to Vercel KV ---
     new_profile_state = json.dumps(user_profile, sort_keys=True)
     if new_profile_state != original_profile_state:
         if user_profile:
-            # If the profile has data, save it to KV.
-            # The key is the user's phone number, the value is the JSON state.
             kv_client.set(user_id, new_profile_state)
         else:
-            # If the profile is now empty (e.g., after 'reset' or a completed registration),
-            # delete the key from KV to clean up.
             kv_client.delete(user_id)
 
 
@@ -468,7 +464,7 @@ def whatsapp_webhook():
                         if 'messages' in change.get('value', {}):
                             for message in change['value']['messages']:
                                 if message.get('type') == 'text':
-                                    user_id = message['from'] # Capture user_id for error reporting
+                                    user_id = message['from']
                                     handle_bot_logic(user_id, message['text']['body'])
         except Exception as e:
             print(f"FATAL Error processing webhook message: {e}")
