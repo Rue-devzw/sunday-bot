@@ -80,7 +80,6 @@ def append_to_google_sheet(data_row, sheet_name):
         print(f"Error appending to Google Sheet: {e}")
         return False
 
-# FIX: New function to read from a Google Sheet and check registration status.
 def check_registration_status(phone_number, sheet_name):
     if not GOOGLE_CREDENTIALS_JSON:
         print("ERROR: Google credentials JSON not set in environment variables.")
@@ -92,16 +91,13 @@ def check_registration_status(phone_number, sheet_name):
         client = gspread.authorize(creds)
         sheet = client.open(sheet_name).sheet1
         
-        # We need to add '+' to the user's WhatsApp number to match the stored format
         user_phone_international = f"+{phone_number}"
         
-        # Get all records and find the user
         records = sheet.get_all_records()
         for record in records:
-            # Assuming the column header in your sheet is 'Phone Number'
-            if record.get('Phone Number') == user_phone_international:
-                return record  # Return the found user's data
-        return None # User not found
+            if str(record.get('Phone Number')) == user_phone_international:
+                return record
+        return None
     except Exception as e:
         print(f"Error checking registration in Google Sheet: {e}")
         return None
@@ -115,7 +111,6 @@ def calculate_age(dob_string):
     except ValueError:
         return None
         
-# ... other helper functions ...
 def get_verse_from_db(passage, db_filename):
     db_path = os.path.join(os.path.dirname(__file__), BIBLES_DIR, db_filename)
     if not os.path.exists(db_path):
@@ -194,9 +189,35 @@ def format_hymn(hymn):
                 message += f"*{i}.*\n" + "\n".join(v_lines) + "\n\n"
     return message.strip()
 
-# ... (lesson formatting functions are unchanged) ...
+def format_primary_pals_lesson(lesson):
+    if not lesson: return "Sorry, no 'Primary Pals' lesson is available for this week."
+    lesson_id_str, title = lesson.get('lesson_id', ''), lesson.get('title', 'N/A')
+    parent_guide = lesson.get('parent_guide', {})
+    bible_text_info = parent_guide.get('bible_text', {})
+    bible_refs = bible_text_info.get('reference', 'N/A')
+    memory_verse_info = parent_guide.get('memory_verse', {})
+    memory_verse_text, memory_verse_ref = memory_verse_info.get('text', ''), memory_verse_info.get('reference', '')
+    memory_verse = f"{memory_verse_text} — {memory_verse_ref}" if memory_verse_text and memory_verse_ref else 'N/A'
+    story_paragraphs = lesson.get('story', [])
+    story_content = "\n\n".join(story_paragraphs) if story_paragraphs else ""
+    parents_corner_info = parent_guide.get('parents_corner', {})
+    parents_corner_title = parents_corner_info.get('title', "Parent's Corner")
+    parents_corner_text = parents_corner_info.get('text', 'No guide available.')
+    family_devotions_info = parent_guide.get('family_devotions', {})
+    family_devotions_title, family_devotions_intro = family_devotions_info.get('title', 'Family Devotions'), family_devotions_info.get('intro', '')
+    devotion_verses = family_devotions_info.get('verses', [])
+    message = f"🧸 *Primary Pals Lesson {lesson_id_str.upper()}: {title}*\n\n"
+    if bible_refs != 'N/A': message += f"📖 *Bible Text:*\n_{bible_refs}_\n\n"
+    if memory_verse != 'N/A': message += f"🔑 *Memory Verse:*\n_{memory_verse}_\n\n"
+    message += "----------\n\n"
+    if story_content: message += f"✨ *Lesson Story*\n{story_content}\n\n"
+    message += f"--- *Parent's Guide* ---\n\n📌 *{parents_corner_title}*\n{parents_corner_text}\n\n"
+    message += f"📌 *{family_devotions_title}*\n"
+    if family_devotions_intro: message += f"_{family_devotions_intro}_\n"
+    message += "".join([f"  *{v.get('day')}:* {v.get('reference')}\n" for v in devotion_verses])
+    message += "\nHave a blessed week! 🧸\n_Type 'ask [question]' or 'reset'_"
+    return message.strip()
 
-# FIX: New function to format the registration details for a status check.
 def format_registration_details(data, camp_name):
     message = (
         f"✅ *You are registered for the {camp_name}!* ✅\n\n"
@@ -215,16 +236,6 @@ def format_registration_details(data, camp_name):
         f"*Camp Stay:* {data.get('Camp Stay', '')}"
     )
     return message
-
-def get_ai_response(question, context):
-    if not gemini_model: return "Sorry, the AI thinking module is currently unavailable."
-    prompt = ( "You are a friendly and helpful Sunday School assistant. Your answers must be based *only* on the provided lesson text (the context). If the answer is not in the text, say that you cannot answer based on the provided material. Keep your answers concise and easy to understand.\n\n" f"--- LESSON CONTEXT ---\n{context}\n\n" f"--- USER QUESTION ---\n{question}" )
-    try:
-        response = gemini_model.generate_content(prompt)
-        return response.text.strip()
-    except Exception as e:
-        print(f"Google Gemini API Error: {e}")
-        return "I'm having a little trouble thinking right now. Please try again in a moment."
 
 # --- MAIN BOT LOGIC HANDLER ---
 def handle_bot_logic(user_id, message_text):
@@ -251,6 +262,8 @@ def handle_bot_logic(user_id, message_text):
         save_json_data(users, user_file)
         return
 
+    # FIX: Refactored state machine to prevent recursion and handle all modes correctly.
+    # If the user has no mode, they are at the main menu.
     if 'mode' not in user_profile:
         if message_text_lower == '1': user_profile['mode'] = 'lessons'
         elif message_text_lower == '2': user_profile['mode'] = 'hymnbook'
@@ -265,109 +278,129 @@ def handle_bot_logic(user_id, message_text):
             user_profile['mode'] = 'check_registration'
         else:
             send_whatsapp_message(user_id, main_menu_text)
-            return
+            return # Stop here if input is invalid
 
-    # --- Mode Handlers ---
+    # --- Mode Handler: Lessons ---
     if user_profile.get('mode') == 'lessons':
-        # ... (Lesson logic remains unchanged) ...
-        pass
-        
+        if 'class' not in user_profile:
+            class_menu = "Please select your Sunday School class:\n\n"
+            for k, v in CLASSES.items(): class_menu += f"*{k}.* {v}\n"
+            send_whatsapp_message(user_id, class_menu.strip())
+            user_profile['mode'] = 'awaiting_class_selection' # Set a temporary state
+        else:
+            # This block handles users who have already selected a class.
+            user_class = user_profile.get('class')
+            lesson_files = { "Beginners": LESSONS_FILE_BEGINNERS, "Primary Pals": LESSONS_FILE_PRIMARY_PALS, "Answer": LESSONS_FILE_ANSWER, "Search": LESSONS_FILE_SEARCH }
+            
+            if message_text_lower.startswith('ask '):
+                # ... ask logic ...
+                pass
+            elif message_text_lower == 'lesson':
+                send_whatsapp_message(user_id, "Fetching this week's lesson...")
+                lesson_index = get_current_lesson_index(user_class)
+                if lesson_index < 0: send_whatsapp_message(user_id, "It seems there are no lessons scheduled for this week.")
+                else:
+                    lesson_file_name = lesson_files.get(user_class)
+                    if not lesson_file_name: send_whatsapp_message(user_id, f"Sorry, lessons for the '{user_class}' class are not available yet.")
+                    else:
+                        lessons_path = os.path.join(os.path.dirname(__file__), lesson_file_name)
+                        raw_data = load_json_data(lessons_path)
+                        lessons_list = raw_data.get("primary_pals_lessons", []) if user_class == "Primary Pals" else raw_data
+                        if lessons_list and 0 <= lesson_index < len(lessons_list):
+                            lesson = lessons_list[lesson_index]
+                            formatted_message = ""
+                            if user_class == "Beginners": formatted_message = format_beginners_lesson(lesson)
+                            elif user_class == "Primary Pals": formatted_message = format_primary_pals_lesson(lesson)
+                            elif user_class in ["Search", "Answer"]: formatted_message = format_search_answer_lesson(lesson, user_class)
+                            else: formatted_message = f"Sorry, I don't know how to format the lesson for the '{user_class}' class yet."
+                            send_whatsapp_message(user_id, formatted_message)
+                        else:
+                            send_whatsapp_message(user_id, "Sorry, I couldn't find this week's lesson. It might not be uploaded yet.")
+            else: 
+                send_whatsapp_message(user_id, "In *Lessons* section: type `lesson`, `ask [question]`, or `reset`.")
+    
+    elif user_profile.get('mode') == 'awaiting_class_selection':
+        if message_text_lower in CLASSES:
+            class_name = CLASSES[message_text_lower]
+            user_profile['class'] = class_name
+            user_profile['mode'] = 'lessons' # Transition back to the main lessons mode
+            send_whatsapp_message(user_id, f"Great! Class set to *{class_name}*.\n\nType `lesson` to get this week's lesson.\nType `reset` to go back.")
+        else:
+            send_whatsapp_message(user_id, "Invalid class number. Please try again.")
+
+    # --- Mode Handler: Camp Registration ---
     elif user_profile.get('mode') == 'camp_registration':
         step = user_profile.get('registration_step', 'start')
         data = user_profile.setdefault('registration_data', {})
         reg_type = user_profile.get('registration_type', 'annual')
-
-        if reg_type == 'youths':
-            camp_name, camp_dates_text = "2025 Regional Youths Camp", "The camp runs from Aug 17 to Aug 24, 2025."
-        else:
-            camp_name, camp_dates_text = "2025 Annual Camp", "The camp runs from Dec 7 to Dec 21, 2025."
+        camp_name, camp_dates_text = ("2025 Regional Youths Camp", "The camp runs from Aug 17 to Aug 24, 2025.") if reg_type == 'youths' else ("2025 Annual Camp", "The camp runs from Dec 7 to Dec 21, 2025.")
         
         if step == 'start':
             send_whatsapp_message(user_id, f"🏕️ *{camp_name} Registration*\n\nLet's get you registered. I'll ask you a few questions one by one. You can type `reset` at any time to cancel.\n\nFirst, what is your *first name*?")
             user_profile['registration_step'] = 'awaiting_first_name'
-        
         elif step == 'awaiting_first_name':
             data['first_name'] = message_text.strip()
             send_whatsapp_message(user_id, "Great! What is your *last name*?")
             user_profile['registration_step'] = 'awaiting_last_name'
-
         elif step == 'awaiting_last_name':
             data['last_name'] = message_text.strip()
             send_whatsapp_message(user_id, "Got it. What is your *date of birth*?\n\nPlease use DD/MM/YYYY format (e.g., 25/12/1998).")
             user_profile['registration_step'] = 'awaiting_dob'
-
         elif step == 'awaiting_dob':
             age = calculate_age(message_text.strip())
-            if not age:
-                send_whatsapp_message(user_id, "That doesn't look right. Please enter your date of birth in DD/MM/YYYY format.")
+            if not age: send_whatsapp_message(user_id, "That doesn't look right. Please enter your date of birth in DD/MM/YYYY format.")
             else:
                 data['dob'], data['age'] = message_text.strip(), age
                 send_whatsapp_message(user_id, "What is your *gender*? (Male / Female)")
                 user_profile['registration_step'] = 'awaiting_gender'
-        
         elif step == 'awaiting_gender':
-            if message_text_lower not in ['male', 'female']:
-                send_whatsapp_message(user_id, "Please just answer with *Male* or *Female*.")
+            if message_text_lower not in ['male', 'female']: send_whatsapp_message(user_id, "Please just answer with *Male* or *Female*.")
             else:
                 data['gender'] = message_text.strip().capitalize()
                 send_whatsapp_message(user_id, "Thanks. Now, please enter your *ID or Passport number*.")
                 user_profile['registration_step'] = 'awaiting_id_passport'
-
         elif step == 'awaiting_id_passport':
             data['id_passport'] = message_text.strip()
             send_whatsapp_message(user_id, "Please enter your *phone number* in international format (e.g., +263771234567).")
             user_profile['registration_step'] = 'awaiting_phone_number'
-
         elif step == 'awaiting_phone_number':
-            if not re.match(r'^\+\d{9,}$', message_text.strip()):
-                 send_whatsapp_message(user_id, "Hmm, that doesn't seem like a valid international phone number. Please try again (e.g., `+263771234567`).")
+            if not re.match(r'^\+\d{9,}$', message_text.strip()): send_whatsapp_message(user_id, "Hmm, that doesn't seem like a valid international phone number. Please try again (e.g., `+263771234567`).")
             else:
                 data['phone'] = message_text.strip()
                 send_whatsapp_message(user_id, "Are you saved? (Please answer *Yes* or *No*)")
                 user_profile['registration_step'] = 'awaiting_salvation_status'
-        
         elif step == 'awaiting_salvation_status':
-            if message_text_lower not in ['yes', 'no']:
-                send_whatsapp_message(user_id, "Please just answer *Yes* or *No*.")
+            if message_text_lower not in ['yes', 'no']: send_whatsapp_message(user_id, "Please just answer *Yes* or *No*.")
             else:
                 data['salvation_status'] = message_text.strip().capitalize()
                 send_whatsapp_message(user_id, "How many dependents (e.g., children) will be attending with you? (Enter 0 if none)")
                 user_profile['registration_step'] = 'awaiting_dependents'
-
         elif step == 'awaiting_dependents':
-            if not message_text.strip().isdigit():
-                send_whatsapp_message(user_id, "Please enter a number (e.g., 0, 1, 2).")
+            if not message_text.strip().isdigit(): send_whatsapp_message(user_id, "Please enter a number (e.g., 0, 1, 2).")
             else:
                 data['dependents'] = message_text.strip()
                 send_whatsapp_message(user_id, "Who is your *next of kin*? (Please provide their full name).")
                 user_profile['registration_step'] = 'awaiting_nok_name'
-        
         elif step == 'awaiting_nok_name':
             data['nok_name'] = message_text.strip()
             send_whatsapp_message(user_id, "What is your *next of kin's phone number*? (International format, e.g., +263771234567).")
             user_profile['registration_step'] = 'awaiting_nok_phone'
-
         elif step == 'awaiting_nok_phone':
-            if not re.match(r'^\+\d{9,}$', message_text.strip()):
-                 send_whatsapp_message(user_id, "That doesn't look like a valid phone number. Please provide the next of kin's number in international format.")
+            if not re.match(r'^\+\d{9,}$', message_text.strip()): send_whatsapp_message(user_id, "That doesn't look like a valid phone number. Please provide the next of kin's number in international format.")
             else:
                 data['nok_phone'] = message_text.strip()
                 send_whatsapp_message(user_id, f"{camp_dates_text}\n\nWhat is your *arrival date*? (e.g., Aug 17)")
                 user_profile['registration_step'] = 'awaiting_camp_start_date'
-        
         elif step == 'awaiting_camp_start_date':
             data['camp_start'] = message_text.strip()
             send_whatsapp_message(user_id, "And what is your *departure date*? (e.g., Aug 24)")
             user_profile['registration_step'] = 'awaiting_camp_end_date'
-            
         elif step == 'awaiting_camp_end_date':
             data['camp_end'] = message_text.strip()
             send_whatsapp_message(user_id, "Thank you. Are you willing to assist voluntarily during the camp? (Please answer *Yes* or *No*)")
             user_profile['registration_step'] = 'awaiting_volunteer_status'
-
         elif step == 'awaiting_volunteer_status':
-            if message_text_lower not in ['yes', 'no']:
-                send_whatsapp_message(user_id, "Please just answer *Yes* or *No*.")
+            if message_text_lower not in ['yes', 'no']: send_whatsapp_message(user_id, "Please just answer *Yes* or *No*.")
             else:
                 data['volunteer_status'] = message_text.strip().capitalize()
                 if message_text_lower == 'yes':
@@ -379,7 +412,6 @@ def handle_bot_logic(user_id, message_text):
                     data['volunteer_department'] = 'N/A'
                     _send_confirmation_message(user_id, data, camp_name)
                     user_profile['registration_step'] = 'awaiting_confirmation'
-
         elif step == 'awaiting_volunteer_department':
             if message_text_lower not in DEPARTMENTS:
                 department_menu = "Invalid selection. Please choose a number from the list:\n\n"
@@ -389,13 +421,11 @@ def handle_bot_logic(user_id, message_text):
                 data['volunteer_department'] = DEPARTMENTS[message_text_lower]
                 _send_confirmation_message(user_id, data, camp_name)
                 user_profile['registration_step'] = 'awaiting_confirmation'
-                
         elif step == 'awaiting_confirmation':
             if message_text_lower == 'confirm':
                 send_whatsapp_message(user_id, "Thank you! Submitting your registration...")
                 row = [
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    data.get('first_name', ''), data.get('last_name', ''),
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"), data.get('first_name', ''), data.get('last_name', ''),
                     data.get('dob', ''), data.get('age', ''), data.get('gender', ''),
                     data.get('id_passport', ''), data.get('phone', ''),
                     data.get('salvation_status', ''), data.get('dependents', ''),
@@ -405,13 +435,10 @@ def handle_bot_logic(user_id, message_text):
                 ]
                 sheet_to_use = YOUTH_CAMP_SHEET_NAME if reg_type == 'youths' else ANNUAL_CAMP_SHEET_NAME
                 success = append_to_google_sheet(row, sheet_to_use)
-                if success:
-                    send_whatsapp_message(user_id, f"✅ Registration successful for the {camp_name}! We look forward to seeing you.")
-                else:
-                    send_whatsapp_message(user_id, "⚠️ There was a problem submitting your registration. Please contact an administrator.")
-                user_profile = {} # Reset state
+                if success: send_whatsapp_message(user_id, f"✅ Registration successful for the {camp_name}! We look forward to seeing you.")
+                else: send_whatsapp_message(user_id, "⚠️ There was a problem submitting your registration. Please contact an administrator.")
+                user_profile = {}
                 if user_id in users: del users[user_id]
-            
             elif message_text_lower == 'restart':
                 user_profile['registration_step'] = 'start'
                 handle_bot_logic(user_id, message_text)
@@ -419,42 +446,30 @@ def handle_bot_logic(user_id, message_text):
             else:
                 send_whatsapp_message(user_id, "Please type *confirm* or *restart*.")
 
-    # FIX: New mode for checking registration status
     elif user_profile.get('mode') == 'check_registration':
-        step = user_profile.get('check_step', 'start')
-        if step == 'start':
+        if 'check_step' not in user_profile:
             send_whatsapp_message(user_id, "Which camp registration would you like to check?\n\n*1.* 2025 Regional Youths Camp\n*2.* 2025 Annual Camp")
             user_profile['check_step'] = 'awaiting_camp_choice'
-        
-        elif step == 'awaiting_camp_choice':
-            sheet_to_check = None
-            camp_name = None
-            if message_text_lower == '1':
-                sheet_to_check = YOUTH_CAMP_SHEET_NAME
-                camp_name = "2025 Regional Youths Camp"
-            elif message_text_lower == '2':
-                sheet_to_check = ANNUAL_CAMP_SHEET_NAME
-                camp_name = "2025 Annual Camp"
+        else:
+            sheet_to_check, camp_name = None, None
+            if message_text_lower == '1': sheet_to_check, camp_name = YOUTH_CAMP_SHEET_NAME, "2025 Regional Youths Camp"
+            elif message_text_lower == '2': sheet_to_check, camp_name = ANNUAL_CAMP_SHEET_NAME, "2025 Annual Camp"
             else:
                 send_whatsapp_message(user_id, "Invalid selection. Please type *1* for Youths Camp or *2* for Annual Camp.")
                 return
 
             send_whatsapp_message(user_id, f"🔍 Checking your registration for the *{camp_name}*...")
             registration_data = check_registration_status(user_id, sheet_to_check)
-            
             if registration_data:
-                status_message = format_registration_details(registration_data, camp_name)
-                send_whatsapp_message(user_id, status_message)
+                send_whatsapp_message(user_id, format_registration_details(registration_data, camp_name))
             else:
                 send_whatsapp_message(user_id, f"❌ We couldn't find a registration for your phone number for the *{camp_name}*.\n\nIf you believe this is an error, please contact an administrator. Otherwise, you can register from the main menu.")
-
-            # Reset the user's state after the check is complete
             user_profile = {}
             if user_id in users: del users[user_id]
             send_whatsapp_message(user_id, "You are now back at the main menu. Type `reset` to see all options.")
-    
+            
     # ... (other modes like hymnbook, bible, etc.) ...
-    
+
     if json.dumps(user_profile) != original_profile_state:
         users[user_id] = user_profile
         save_json_data(users, user_file)
@@ -478,7 +493,6 @@ def _send_confirmation_message(user_id, data, camp_name):
         "Is everything correct? Type *confirm* to submit, or *restart* to enter your details again."
     )
     send_whatsapp_message(user_id, confirmation_message)
-
 
 def send_whatsapp_message(recipient_id, message_text):
     if not all([WHATSAPP_TOKEN, PHONE_NUMBER_ID]):
@@ -517,4 +531,4 @@ def whatsapp_webhook():
 
 @app.route('/')
 def health_check():
-    return "SundayBot with Camp Registration & Check is running!", 200
+    return "SundayBot with Full Features is running!", 200
