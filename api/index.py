@@ -11,21 +11,6 @@ from datetime import datetime, date
 from dateutil.relativedelta import relativedelta, MO
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import redis
-
-# --- DIAGNOSTIC STEP: Print all available environment variables to Vercel logs ---
-print(f"--- VERCEL ENV VARS ---\n{os.environ}\n----------------------")
-
-# --- MODIFIED: Added support for local .env file for testing ---
-try:
-    from dotenv import load_dotenv
-    # This will load variables from a .env file if it exists.
-    # It does nothing if the file is not found (which is expected on Vercel).
-    load_dotenv()
-    print("Dotenv loaded (if .env file exists).")
-except ImportError:
-    print("Dotenv not installed, skipping. This is normal for production.")
-
 
 # --- 1. INITIALIZE FLASK & API CLIENTS ---
 app = Flask(__name__)
@@ -36,20 +21,6 @@ try:
 except Exception as e:
     print(f"Error initializing Gemini client: {e}")
     gemini_model = None
-
-# --- Vercel KV Client Initialization ---
-kv_client = None
-KV_URL = os.environ.get('KV_URL')
-if KV_URL:
-    try:
-        kv_client = redis.from_url(KV_URL)
-        print("Successfully connected to Vercel KV.")
-    except Exception as e:
-        print(f"FATAL: Could not connect to Vercel KV. Error: {e}")
-else:
-    # This message is the source of the error you are seeing.
-    print("WARNING: KV_URL environment variable not set. User state will not be persistent.")
-
 
 # --- 2. CONFIGURATION & ENVIRONMENT VARIABLES ---
 VERIFY_TOKEN = os.environ.get('VERIFY_TOKEN')
@@ -63,6 +34,8 @@ YOUTH_CAMP_SHEET_NAME = os.environ.get('YOUTH_CAMP_SHEET_NAME', 'Youths Camp Reg
 ANCHOR_DATE = date(2024, 8, 21)
 PRIMARY_PALS_ANCHOR_DATE = date(2024, 9, 1)
 
+# --- REVERTED: Using the temporary file system for user state ---
+USERS_FILE = 'users.json'
 HYMNBOOKS_DIR = 'hymnbooks'
 BIBLES_DIR = 'bibles'
 LESSONS_FILE_SEARCH = 'search_lessons.json'
@@ -113,7 +86,7 @@ def calculate_age(dob_string):
         return age
     except ValueError:
         return None
-
+        
 def get_verse_from_db(passage, db_filename):
     db_path = os.path.join(os.path.dirname(__file__), BIBLES_DIR, db_filename)
     if not os.path.exists(db_path):
@@ -148,12 +121,22 @@ def get_verse_from_db(passage, db_filename):
         print(f"SQLite Database Error: {e}")
         return "Sorry, I'm having trouble looking up the Bible verse right now."
 
-def load_json_data(file_path):
+# --- REVERTED: Re-introducing file-based helper functions ---
+def get_user_file_path():
+    # In a serverless environment like Vercel, only /tmp is writeable
+    return f'/tmp/{USERS_FILE}' if 'VERCEL' in os.environ else os.path.join(os.path.dirname(__file__), USERS_FILE)
+
+def load_json_file(file_path):
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return []
+        # Return a dictionary for users.json, list for lessons/hymns
+        return [] if any(x in file_path for x in ['lessons', 'hymn']) else {}
+
+def save_json_file(data, file_path):
+    with open(file_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=4)
 
 def get_current_lesson_index(user_class):
     today = date.today()
@@ -198,21 +181,13 @@ def get_ai_response(question, context):
 
 # --- MAIN BOT LOGIC HANDLER ---
 def handle_bot_logic(user_id, message_text):
-    if not kv_client:
-        # This is the line that is triggering your error message.
-        print("CRITICAL: kv_client not initialized. Cannot handle logic.")
-        send_whatsapp_message(user_id, "I'm sorry, my memory is currently unavailable. Please contact an administrator.")
-        return
-
-    try:
-        user_profile_json = kv_client.get(user_id)
-        user_profile = json.loads(user_profile_json) if user_profile_json else {}
-    except Exception as e:
-        print(f"Error loading user profile from KV for user {user_id}: {e}")
-        user_profile = {}
-
-    original_profile_state = json.dumps(user_profile, sort_keys=True)
+    # --- REVERTED: Load user state from a JSON file ---
+    user_file_path = get_user_file_path()
+    users = load_json_file(user_file_path)
+    
     message_text_lower = message_text.lower().strip()
+    user_profile = users.get(user_id, {})
+    original_profile_state = json.dumps(user_profile)
 
     main_menu_text = (
         "Welcome! 🙏\n\nPlease choose a section:\n\n"
@@ -226,7 +201,8 @@ def handle_bot_logic(user_id, message_text):
     if message_text_lower == 'reset':
         user_profile = {}
         send_whatsapp_message(user_id, f"Your session has been reset. {main_menu_text}")
-        kv_client.delete(user_id)
+        if user_id in users: del users[user_id]
+        save_json_file(users, user_file_path) # Save after removing the user
         return
 
     if 'mode' not in user_profile:
@@ -246,9 +222,8 @@ def handle_bot_logic(user_id, message_text):
     # --- Mode Handler: Lessons ---
     if user_profile.get('mode') == 'lessons':
         # ... (Lesson logic remains unchanged) ...
-        # This section is currently a placeholder 'pass' in your code
         pass
-
+        
     # --- Mode Handler: Camp Registration ---
     elif user_profile.get('mode') == 'camp_registration':
         step = user_profile.get('registration_step', 'start')
@@ -266,6 +241,7 @@ def handle_bot_logic(user_id, message_text):
             send_whatsapp_message(user_id, f"🏕️ *{camp_name} Registration*\n\nLet's get you registered. I'll ask you a few questions one by one. You can type `reset` at any time to cancel.\n\nFirst, what is your *first name*?")
             user_profile['registration_step'] = 'awaiting_first_name'
         
+        # ... [The entire registration logic chain remains exactly the same as your original code] ...
         elif step == 'awaiting_first_name':
             data['first_name'] = message_text.strip()
             send_whatsapp_message(user_id, "Great! What is your *last name*?")
@@ -394,6 +370,7 @@ def handle_bot_logic(user_id, message_text):
                     send_whatsapp_message(user_id, "⚠️ There was a problem submitting your registration. Please contact an administrator.")
                 
                 user_profile = {}
+                if user_id in users: del users[user_id]
             
             elif message_text_lower == 'restart':
                 user_profile['registration_data'] = {}
@@ -402,18 +379,13 @@ def handle_bot_logic(user_id, message_text):
                 return
             else:
                 send_whatsapp_message(user_id, "Please type *confirm* or *restart*.")
-
-    # --- Save user state to Vercel KV ---
-    new_profile_state = json.dumps(user_profile, sort_keys=True)
-    if new_profile_state != original_profile_state:
-        if user_profile:
-            kv_client.set(user_id, new_profile_state)
-        else:
-            kv_client.delete(user_id)
-
+    
+    # --- REVERTED: Save user state to a JSON file ---
+    if json.dumps(user_profile) != original_profile_state:
+        users[user_id] = user_profile
+        save_json_file(users, user_file_path)
 
 def _send_confirmation_message(user_id, data, camp_name):
-    """Helper function to build and send the confirmation message."""
     confirmation_message = (
         f"📝 *Please confirm your details for the {camp_name}:*\n\n"
         f"*Name:* {data.get('first_name', '')} {data.get('last_name', '')}\n"
@@ -456,7 +428,6 @@ def whatsapp_webhook():
     if request.method == 'POST':
         data = request.get_json()
         print(f"Incoming data: {json.dumps(data, indent=2)}")
-        user_id = None
         try:
             if data and 'entry' in data:
                 for entry in data['entry']:
@@ -464,12 +435,9 @@ def whatsapp_webhook():
                         if 'messages' in change.get('value', {}):
                             for message in change['value']['messages']:
                                 if message.get('type') == 'text':
-                                    user_id = message['from']
-                                    handle_bot_logic(user_id, message['text']['body'])
+                                    handle_bot_logic(message['from'], message['text']['body'])
         except Exception as e:
-            print(f"FATAL Error processing webhook message: {e}")
-            if user_id:
-                send_whatsapp_message(user_id, "I'm sorry, an unexpected error occurred. Please type `reset` and try again.")
+            print(f"Error processing webhook message: {e}")
         return 'OK', 200
 
 @app.route('/')
