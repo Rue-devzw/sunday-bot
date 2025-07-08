@@ -37,8 +37,7 @@ PRIMARY_PALS_ANCHOR_DATE = date(2024, 9, 1)
 USERS_FILE = 'users.json'
 HYMNBOOKS_DIR = 'hymnbooks'
 BIBLES_DIR = 'bibles'
-# --- NEW: Added a dedicated directory for lesson files ---
-LESSONS_DIR = 'lessons' 
+LESSONS_DIR = 'lessons'
 LESSONS_FILE_SEARCH = 'search_lessons.json'
 LESSONS_FILE_ANSWER = 'answer_lessons.json'
 LESSONS_FILE_BEGINNERS = 'beginners_lessons.json'
@@ -62,8 +61,6 @@ DEPARTMENTS = {
 
 
 # --- 3. HELPER & FORMATTING FUNCTIONS ---
-# All helper functions are here and unchanged, omitting for brevity.
-# ... (append_to_google_sheet, calculate_age, get_verse_from_db, etc.) ...
 def append_to_google_sheet(data_row, sheet_name):
     if not GOOGLE_CREDENTIALS_JSON:
         print("ERROR: Google credentials JSON not set in environment variables.")
@@ -84,8 +81,7 @@ def calculate_age(dob_string):
     try:
         birth_date = datetime.strptime(dob_string, "%d/%m/%Y").date()
         today = date.today()
-        age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
-        return age
+        return today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
     except ValueError:
         return None
         
@@ -131,7 +127,6 @@ def load_json_file(file_path):
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as e:
-        # --- MODIFIED: Add logging to see the error ---
         print(f"DEBUG: Error loading JSON file '{file_path}': {e}")
         return [] if any(x in file_path for x in ['lessons', 'hymn']) else {}
 
@@ -141,14 +136,11 @@ def save_json_file(data, file_path):
 
 def get_current_lesson_index(user_class):
     today = date.today()
-    if user_class == "Primary Pals":
-        anchor_date = PRIMARY_PALS_ANCHOR_DATE
-    else:
-        anchor_date = ANCHOR_DATE
-    anchor_week_start = anchor_date + relativedelta(weekday=MO(-1))
+    anchor = PRIMARY_PALS_ANCHOR_DATE if user_class == "Primary Pals" else ANCHOR_DATE
+    anchor_week_start = anchor + relativedelta(weekday=MO(-1))
     current_week_start = today + relativedelta(weekday=MO(-1))
-    week_difference = (current_week_start - anchor_week_start).days // 7
-    return week_difference if week_difference >= 0 else -1
+    week_diff = (current_week_start - anchor_week_start).days // 7
+    return week_diff if week_diff >= 0 else -1
 
 def format_hymn(hymn):
     if not hymn: return "Sorry, I couldn't find a hymn with that number in your selected hymnbook."
@@ -169,15 +161,37 @@ def format_hymn(hymn):
                 message += f"*{i}.*\n" + "\n".join(v_lines) + "\n\n"
     return message.strip()
 
-def format_lesson(lesson):
+def format_lesson(lesson, lesson_class):
     if not lesson: return "Lesson details could not be found."
-    title = lesson.get('title', 'No Title')
-    lesson_num = lesson.get('lesson', '#')
-    memory_verse = lesson.get('memory_verse', 'N/A')
-    main_text = "\n".join(lesson.get('text', []))
+    
+    title = "No Title"
+    memory_verse = "N/A"
+    main_text = ""
+    
+    if lesson_class == "Primary Pals":
+        title = lesson.get('title', 'No Title')
+        parent_guide = lesson.get('parent_guide', {})
+        memory_verse_obj = parent_guide.get('memory_verse', {})
+        memory_verse = memory_verse_obj.get('text', 'N/A')
+        main_text = "\n\n".join(lesson.get('story', []))
+        
+    elif lesson_class == "Search":
+        title = lesson.get('lessonTitle', 'No Title')
+        memory_verse = lesson.get('keyVerse', 'N/A')
+        text_sections = [
+            sec.get('sectionContent', '') 
+            for sec in lesson.get('lessonSections', []) 
+            if sec.get('sectionType') == 'text'
+        ]
+        main_text = "\n\n".join(text_sections)
+        
+    else: # Default/generic format for "Beginners" and "Answer"
+        title = lesson.get('title', 'No Title')
+        memory_verse = lesson.get('memory_verse', 'N/A')
+        main_text = "\n".join(lesson.get('text', []))
 
     message = (
-        f"📖 *Lesson {lesson_num}: {title}*\n\n"
+        f"📖 *{title}*\n\n"
         f"📌 *Memory Verse:*\n_{memory_verse}_\n\n"
         f"📝 *Lesson Text:*\n{main_text}"
     )
@@ -203,52 +217,33 @@ def handle_bot_logic(user_id, message_text):
     user_profile = users.get(user_id, {})
     original_profile_state = json.dumps(user_profile)
 
-    main_menu_text = (
-        "Welcome! 🙏\n\nPlease choose a section:\n\n"
-        "*1.* Weekly Lessons\n"
-        "*2.* Hymnbook\n"
-        "*3.* Bible Lookup\n"
-        "*4.* 2025 Regional Youths Camp Registration\n"
-        "*5.* 2025 Annual Camp Registration"
-    )
+    main_menu_text = "Welcome! 🙏\n\nPlease choose a section:\n\n*1.* Weekly Lessons\n*2.* Hymnbook\n*3.* Bible Lookup\n*4.* 2025 Regional Youths Camp Registration\n*5.* 2025 Annual Camp Registration"
 
-    if message_text_lower == 'reset':
+    if message_text_lower in ['reset', 'm'] and 'mode' in user_profile:
         user_profile = {}
-        send_whatsapp_message(user_id, f"Your session has been reset. {main_menu_text}")
-        if user_id in users: del users[user_id]
-        save_json_file(users, user_file_path)
-        return
-        
-    if message_text_lower == 'm' and 'mode' in user_profile:
-        user_profile = {}
-        send_whatsapp_message(user_id, f"OK, returning to the main menu. {main_menu_text}")
+        msg = f"Your session has been reset. {main_menu_text}" if message_text_lower == 'reset' else f"OK, returning to the main menu. {main_menu_text}"
+        send_whatsapp_message(user_id, msg)
         if user_id in users: del users[user_id]
         save_json_file(users, user_file_path)
         return
 
     if 'mode' not in user_profile:
-        if message_text_lower == '1': user_profile['mode'] = 'lessons'
-        elif message_text_lower == '2': user_profile['mode'] = 'hymnbook'
-        elif message_text_lower == '3': user_profile['mode'] = 'bible'
-        elif message_text_lower == '4':
-            user_profile['mode'] = 'camp_registration'
-            user_profile['registration_type'] = 'youths'
-        elif message_text_lower == '5':
-            user_profile['mode'] = 'camp_registration'
-            user_profile['registration_type'] = 'annual'
+        modes = {'1': 'lessons', '2': 'hymnbook', '3': 'bible', '4': 'camp_registration', '5': 'camp_registration'}
+        if message_text_lower in modes:
+            user_profile['mode'] = modes[message_text_lower]
+            if message_text_lower == '4': user_profile['registration_type'] = 'youths'
+            if message_text_lower == '5': user_profile['registration_type'] = 'annual'
         else:
             send_whatsapp_message(user_id, main_menu_text)
             return
 
-    # --- LOGIC FILLED IN: Mode Handler: Lessons ---
+    # --- Mode Handler: Lessons ---
     if user_profile.get('mode') == 'lessons':
         step = user_profile.get('lesson_step', 'start')
 
         if step == 'start':
-            class_menu = "Please select your class:\n\n"
-            for key, name in CLASSES.items():
-                class_menu += f"*{key}.* {name}\n"
-            send_whatsapp_message(user_id, class_menu.strip())
+            class_menu = "Please select your class:\n\n" + "\n".join([f"*{k}.* {v}" for k, v in CLASSES.items()])
+            send_whatsapp_message(user_id, class_menu)
             user_profile['lesson_step'] = 'awaiting_class_choice'
         
         elif step == 'awaiting_class_choice':
@@ -262,50 +257,37 @@ def handle_bot_logic(user_id, message_text):
                     "Beginners": LESSONS_FILE_BEGINNERS, "Primary Pals": LESSONS_FILE_PRIMARY_PALS,
                     "Answer": LESSONS_FILE_ANSWER, "Search": LESSONS_FILE_SEARCH
                 }
-                lesson_file = lesson_files.get(user_class)
+                lesson_file_path = os.path.join(os.path.dirname(__file__), LESSONS_DIR, lesson_files.get(user_class))
                 
-                # --- MODIFIED: Build the correct path using LESSONS_DIR ---
-                lesson_file_path = os.path.join(os.path.dirname(__file__), LESSONS_DIR, lesson_file)
+                raw_data = load_json_file(lesson_file_path)
                 
-                # --- DIAGNOSTIC LOGGING ---
-                print(f"DEBUG: Attempting to load lesson file from: {lesson_file_path}")
-                all_lessons = load_json_file(lesson_file_path)
-                print(f"DEBUG: Loaded {len(all_lessons)} lessons from the file.")
+                if user_class == "Primary Pals" and isinstance(raw_data, dict):
+                    all_lessons = raw_data.get('primary_pals_lessons', [])
+                elif isinstance(raw_data, list):
+                    all_lessons = raw_data
+                else:
+                    all_lessons = []
                 
                 lesson_index = get_current_lesson_index(user_class)
-                print(f"DEBUG: Calculated current lesson index as: {lesson_index}")
-                # --- END DIAGNOSTIC LOGGING ---
 
                 if all_lessons and 0 <= lesson_index < len(all_lessons):
                     current_lesson = all_lessons[lesson_index]
                     user_profile['current_lesson_data'] = current_lesson
                     
-                    lesson_action_menu = (
-                        f"This week's lesson for the *{user_class}* class is: *{current_lesson.get('title', 'N/A')}*\n\n"
-                        "What would you like to do?\n"
-                        "*1.* Read the full lesson\n"
-                        "*2.* Ask a question about the lesson\n\n"
-                        "Type *m* to return to the main menu."
-                    )
+                    title = current_lesson.get('title') or current_lesson.get('lessonTitle', 'N/A')
+                    lesson_action_menu = f"This week's lesson for *{user_class}* is: *{title}*\n\nWhat would you like to do?\n*1.* Read the full lesson\n*2.* Ask a question\n\nType *m* to return."
                     send_whatsapp_message(user_id, lesson_action_menu)
                     user_profile['lesson_step'] = 'awaiting_lesson_action'
                 else:
-                    # This is the error path. The debug logs above will tell us why we're here.
                     send_whatsapp_message(user_id, "Sorry, I couldn't find the current lesson for your class. Please contact an administrator.")
-                    user_profile = {} # Reset
+                    user_profile = {}
         
         elif step == 'awaiting_lesson_action':
             if message_text_lower == '1':
                 lesson_data = user_profile.get('current_lesson_data')
-                formatted_lesson = format_lesson(lesson_data)
+                formatted_lesson = format_lesson(lesson_data, user_profile.get('lesson_class'))
                 send_whatsapp_message(user_id, formatted_lesson)
-                lesson_action_menu = (
-                    "What would you like to do next?\n"
-                    "*1.* Read the full lesson again\n"
-                    "*2.* Ask a question about the lesson\n\n"
-                    "Type *m* to return to the main menu."
-                )
-                send_whatsapp_message(user_id, lesson_action_menu)
+                send_whatsapp_message(user_id, "What next?\n*1.* Read again\n*2.* Ask a question\n\nType *m* to return.")
             elif message_text_lower == '2':
                 send_whatsapp_message(user_id, "OK, please type your question about the lesson.")
                 user_profile['lesson_step'] = 'awaiting_ai_question'
@@ -315,31 +297,20 @@ def handle_bot_logic(user_id, message_text):
         elif step == 'awaiting_ai_question':
             question = message_text
             lesson_data = user_profile.get('current_lesson_data')
-            context = format_lesson(lesson_data)
+            context = format_lesson(lesson_data, user_profile.get('lesson_class'))
             
             ai_answer = get_ai_response(question, context)
             send_whatsapp_message(user_id, f"🤔 *Answer:*\n{ai_answer}")
             
             user_profile['lesson_step'] = 'awaiting_lesson_action'
-            lesson_action_menu = (
-                "You can ask another question, or choose an option:\n"
-                "*1.* Read the full lesson\n"
-                "*2.* Ask another question\n\n"
-                "Type *m* to return to the main menu."
-            )
-            send_whatsapp_message(user_id, lesson_action_menu)
-            
-    # --- Other modes (Hymnbook, Bible, Camp Registration) are here and unchanged ---
-    # ... I am omitting them for brevity, but they should be in the final file ...
-    # --- LOGIC FILLED IN: Mode Handler: Hymnbook ---
+            send_whatsapp_message(user_id, "You can ask another question, or choose an option:\n*1.* Read lesson\n*2.* Ask again\n\nType *m* to return.")
+
     elif user_profile.get('mode') == 'hymnbook':
         step = user_profile.get('hymn_step', 'start')
 
         if step == 'start':
-            hymnbook_menu = "Please select a hymnbook:\n\n"
-            for key, book in HYMNBOOKS.items():
-                hymnbook_menu += f"*{key}.* {book['name']}\n"
-            send_whatsapp_message(user_id, hymnbook_menu.strip())
+            hymnbook_menu = "Please select a hymnbook:\n\n" + "\n".join([f"*{k}.* {v['name']}" for k,v in HYMNBOOKS.items()])
+            send_whatsapp_message(user_id, hymnbook_menu)
             user_profile['hymn_step'] = 'awaiting_hymnbook_choice'
             
         elif step == 'awaiting_hymnbook_choice':
@@ -358,25 +329,17 @@ def handle_bot_logic(user_id, message_text):
             else:
                 hymn_file_path = os.path.join(os.path.dirname(__file__), HYMNBOOKS_DIR, user_profile['hymnbook_file'])
                 all_hymns = load_json_file(hymn_file_path)
-                
                 found_hymn = next((h for h in all_hymns if str(h.get('number')) == hymn_number), None)
                 
-                if found_hymn:
-                    send_whatsapp_message(user_id, format_hymn(found_hymn))
-                else:
-                    send_whatsapp_message(user_id, f"Sorry, I couldn't find hymn #{hymn_number} in this hymnbook.")
-                
+                send_whatsapp_message(user_id, format_hymn(found_hymn))
                 send_whatsapp_message(user_id, "You can enter another hymn number, or type *m* to go back.")
 
-    # --- LOGIC FILLED IN: Mode Handler: Bible ---
     elif user_profile.get('mode') == 'bible':
         step = user_profile.get('bible_step', 'start')
 
         if step == 'start':
-            bible_menu = "Please select a Bible version:\n\n"
-            for key, bible in BIBLES.items():
-                bible_menu += f"*{key}.* {bible['name']}\n"
-            send_whatsapp_message(user_id, bible_menu.strip())
+            bible_menu = "Please select a Bible version:\n\n" + "\n".join([f"*{k}.* {v['name']}" for k,v in BIBLES.items()])
+            send_whatsapp_message(user_id, bible_menu)
             user_profile['bible_step'] = 'awaiting_bible_choice'
             
         elif step == 'awaiting_bible_choice':
@@ -385,7 +348,7 @@ def handle_bot_logic(user_id, message_text):
             else:
                 chosen_bible = BIBLES[message_text_lower]
                 user_profile['bible_file'] = chosen_bible['file']
-                send_whatsapp_message(user_id, f"You've selected the *{chosen_bible['name']}*. Please enter a passage to look up (e.g., John 3:16).\n\nType *m* to return to the main menu.")
+                send_whatsapp_message(user_id, f"You've selected the *{chosen_bible['name']}*. Please enter a passage (e.g., John 3:16).\n\nType *m* to return.")
                 user_profile['bible_step'] = 'awaiting_passage'
 
         elif step == 'awaiting_passage':
@@ -394,43 +357,31 @@ def handle_bot_logic(user_id, message_text):
             send_whatsapp_message(user_id, verse_text)
             send_whatsapp_message(user_id, "You can enter another passage, or type *m* to go back.")
 
-    # --- Mode Handler: Camp Registration ---
     elif user_profile.get('mode') == 'camp_registration':
         step = user_profile.get('registration_step', 'start')
         data = user_profile.setdefault('registration_data', {})
         reg_type = user_profile.get('registration_type', 'annual')
-
-        if reg_type == 'youths':
-            camp_name = "2025 Regional Youths Camp"
-            camp_dates_text = "The camp runs from Aug 17 to Aug 24, 2025."
-        else:
-            camp_name = "2025 Annual Camp"
-            camp_dates_text = "The camp runs from Dec 7 to Dec 21, 2025."
+        camp_name = "2025 Regional Youths Camp" if reg_type == 'youths' else "2025 Annual Camp"
         
         if step == 'start':
-            send_whatsapp_message(user_id, f"🏕️ *{camp_name} Registration*\n\nLet's get you registered. I'll ask you a few questions one by one. You can type `reset` at any time to cancel.\n\nFirst, what is your *first name*?")
+            send_whatsapp_message(user_id, f"🏕️ *{camp_name} Registration*\n\nLet's get you registered. I'll ask a few questions one by one. You can type `reset` at any time to cancel.\n\nFirst, what is your *first name*?")
             user_profile['registration_step'] = 'awaiting_first_name'
-        
         elif step == 'awaiting_first_name':
             data['first_name'] = message_text.strip()
             send_whatsapp_message(user_id, "Great! What is your *last name*?")
             user_profile['registration_step'] = 'awaiting_last_name'
-
         elif step == 'awaiting_last_name':
             data['last_name'] = message_text.strip()
             send_whatsapp_message(user_id, "Got it. What is your *date of birth*?\n\nPlease use DD/MM/YYYY format (e.g., 25/12/1998).")
             user_profile['registration_step'] = 'awaiting_dob'
-
         elif step == 'awaiting_dob':
             age = calculate_age(message_text.strip())
             if not age:
                 send_whatsapp_message(user_id, "That doesn't look right. Please enter your date of birth in DD/MM/YYYY format.")
             else:
-                data['dob'] = message_text.strip()
-                data['age'] = age
+                data.update({'dob': message_text.strip(), 'age': age})
                 send_whatsapp_message(user_id, "What is your *gender*? (Male / Female)")
                 user_profile['registration_step'] = 'awaiting_gender'
-        
         elif step == 'awaiting_gender':
             if message_text_lower not in ['male', 'female']:
                 send_whatsapp_message(user_id, "Please just answer with *Male* or *Female*.")
@@ -438,20 +389,17 @@ def handle_bot_logic(user_id, message_text):
                 data['gender'] = message_text.strip().capitalize()
                 send_whatsapp_message(user_id, "Thanks. Now, please enter your *ID or Passport number*.")
                 user_profile['registration_step'] = 'awaiting_id_passport'
-
         elif step == 'awaiting_id_passport':
             data['id_passport'] = message_text.strip()
             send_whatsapp_message(user_id, "Please enter your *phone number* in international format (e.g., +263771234567).")
             user_profile['registration_step'] = 'awaiting_phone_number'
-
         elif step == 'awaiting_phone_number':
             if not re.match(r'^\+\d{9,}$', message_text.strip()):
-                 send_whatsapp_message(user_id, "Hmm, that doesn't seem like a valid international phone number. Please try again (e.g., `+263771234567`).")
+                send_whatsapp_message(user_id, "Hmm, that doesn't seem like a valid international phone number. Please try again.")
             else:
                 data['phone'] = message_text.strip()
                 send_whatsapp_message(user_id, "Are you saved? (Please answer *Yes* or *No*)")
                 user_profile['registration_step'] = 'awaiting_salvation_status'
-        
         elif step == 'awaiting_salvation_status':
             if message_text_lower not in ['yes', 'no']:
                 send_whatsapp_message(user_id, "Please just answer *Yes* or *No*.")
@@ -459,7 +407,6 @@ def handle_bot_logic(user_id, message_text):
                 data['salvation_status'] = message_text.strip().capitalize()
                 send_whatsapp_message(user_id, "How many dependents (e.g., children) will be attending with you? (Enter 0 if none)")
                 user_profile['registration_step'] = 'awaiting_dependents'
-
         elif step == 'awaiting_dependents':
             if not message_text.strip().isdigit():
                 send_whatsapp_message(user_id, "Please enter a number (e.g., 0, 1, 2).")
@@ -467,55 +414,46 @@ def handle_bot_logic(user_id, message_text):
                 data['dependents'] = message_text.strip()
                 send_whatsapp_message(user_id, "Who is your *next of kin*? (Please provide their full name).")
                 user_profile['registration_step'] = 'awaiting_nok_name'
-        
         elif step == 'awaiting_nok_name':
             data['nok_name'] = message_text.strip()
-            send_whatsapp_message(user_id, "What is your *next of kin's phone number*? (International format, e.g., +263771234567).")
+            send_whatsapp_message(user_id, "What is your *next of kin's phone number*? (International format).")
             user_profile['registration_step'] = 'awaiting_nok_phone'
-
         elif step == 'awaiting_nok_phone':
             if not re.match(r'^\+\d{9,}$', message_text.strip()):
-                 send_whatsapp_message(user_id, "That doesn't look like a valid phone number. Please provide the next of kin's number in international format.")
+                send_whatsapp_message(user_id, "That doesn't look like a valid phone number. Please provide it in international format.")
             else:
                 data['nok_phone'] = message_text.strip()
-                send_whatsapp_message(user_id, f"{camp_dates_text}\n\nWhat is your *arrival date*? (e.g., Aug 17)")
+                camp_dates_text = "Aug 17 to Aug 24, 2025" if reg_type == 'youths' else "Dec 7 to Dec 21, 2025"
+                send_whatsapp_message(user_id, f"The camp runs from {camp_dates_text}.\n\nWhat is your *arrival date*? (e.g., Aug 17)")
                 user_profile['registration_step'] = 'awaiting_camp_start_date'
-        
         elif step == 'awaiting_camp_start_date':
             data['camp_start'] = message_text.strip()
-            send_whatsapp_message(user_id, "And what is your *departure date*? (e.g., Aug 24)")
+            send_whatsapp_message(user_id, "And what is your *departure date*?")
             user_profile['registration_step'] = 'awaiting_camp_end_date'
-            
         elif step == 'awaiting_camp_end_date':
             data['camp_end'] = message_text.strip()
-            send_whatsapp_message(user_id, "Thank you. Are you willing to assist voluntarily during the camp? (Please answer *Yes* or *No*)")
+            send_whatsapp_message(user_id, "Are you willing to assist voluntarily during the camp? (Yes / No)")
             user_profile['registration_step'] = 'awaiting_volunteer_status'
-
         elif step == 'awaiting_volunteer_status':
             if message_text_lower not in ['yes', 'no']:
                 send_whatsapp_message(user_id, "Please just answer *Yes* or *No*.")
             else:
                 data['volunteer_status'] = message_text.strip().capitalize()
                 if message_text_lower == 'yes':
-                    department_menu = "That's wonderful! Which department would you like to assist in?\n\n"
-                    for k, v in DEPARTMENTS.items(): department_menu += f"*{k}.* {v}\n"
-                    send_whatsapp_message(user_id, department_menu.strip())
+                    dept_menu = "That's wonderful! Which department?\n\n" + "\n".join([f"*{k}.* {v}" for k,v in DEPARTMENTS.items()])
+                    send_whatsapp_message(user_id, dept_menu)
                     user_profile['registration_step'] = 'awaiting_volunteer_department'
                 else:
                     data['volunteer_department'] = 'N/A'
                     _send_confirmation_message(user_id, data, camp_name)
                     user_profile['registration_step'] = 'awaiting_confirmation'
-
         elif step == 'awaiting_volunteer_department':
             if message_text_lower not in DEPARTMENTS:
-                department_menu = "Invalid selection. Please choose a number from the list:\n\n"
-                for k, v in DEPARTMENTS.items(): department_menu += f"*{k}.* {v}\n"
-                send_whatsapp_message(user_id, department_menu.strip())
+                send_whatsapp_message(user_id, "Invalid selection. Please choose a number from the list.")
             else:
                 data['volunteer_department'] = DEPARTMENTS[message_text_lower]
                 _send_confirmation_message(user_id, data, camp_name)
                 user_profile['registration_step'] = 'awaiting_confirmation'
-                
         elif step == 'awaiting_confirmation':
             if message_text_lower == 'confirm':
                 send_whatsapp_message(user_id, "Thank you! Submitting your registration...")
@@ -529,21 +467,14 @@ def handle_bot_logic(user_id, message_text):
                     data.get('nok_name', ''), data.get('nok_phone', ''),
                     f"{data.get('camp_start', '')} to {data.get('camp_end', '')}"
                 ]
-                
                 sheet_to_use = YOUTH_CAMP_SHEET_NAME if reg_type == 'youths' else ANNUAL_CAMP_SHEET_NAME
                 success = append_to_google_sheet(row, sheet_to_use)
-                
-                if success:
-                    send_whatsapp_message(user_id, f"✅ Registration successful for the {camp_name}! We look forward to seeing you.")
-                else:
-                    send_whatsapp_message(user_id, "⚠️ There was a problem submitting your registration. Please contact an administrator.")
-                
+                msg = f"✅ Registration successful for the {camp_name}! We look forward to seeing you." if success else "⚠️ There was a problem submitting. Please contact an administrator."
+                send_whatsapp_message(user_id, msg)
                 user_profile = {}
                 if user_id in users: del users[user_id]
-            
             elif message_text_lower == 'restart':
-                user_profile['registration_data'] = {}
-                user_profile['registration_step'] = 'start'
+                user_profile.update({'registration_data': {}, 'registration_step': 'start'})
                 handle_bot_logic(user_id, message_text)
                 return
             else:
@@ -553,8 +484,6 @@ def handle_bot_logic(user_id, message_text):
         users[user_id] = user_profile
         save_json_file(users, user_file_path)
 
-# --- All remaining functions are here and unchanged ---
-# ... (_send_confirmation_message, send_whatsapp_message, webhook, health_check) ...
 def _send_confirmation_message(user_id, data, camp_name):
     confirmation_message = (
         f"📝 *Please confirm your details for the {camp_name}:*\n\n"
@@ -573,7 +502,6 @@ def _send_confirmation_message(user_id, data, camp_name):
         "Is everything correct? Type *confirm* to submit, or *restart* to enter your details again."
     )
     send_whatsapp_message(user_id, confirmation_message)
-
 
 def send_whatsapp_message(recipient_id, message_text):
     if not all([WHATSAPP_TOKEN, PHONE_NUMBER_ID]):
