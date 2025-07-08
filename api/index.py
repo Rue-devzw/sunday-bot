@@ -37,6 +37,8 @@ PRIMARY_PALS_ANCHOR_DATE = date(2024, 9, 1)
 USERS_FILE = 'users.json'
 HYMNBOOKS_DIR = 'hymnbooks'
 BIBLES_DIR = 'bibles'
+# --- NEW: Added a dedicated directory for lesson files ---
+LESSONS_DIR = 'lessons' 
 LESSONS_FILE_SEARCH = 'search_lessons.json'
 LESSONS_FILE_ANSWER = 'answer_lessons.json'
 LESSONS_FILE_BEGINNERS = 'beginners_lessons.json'
@@ -60,9 +62,9 @@ DEPARTMENTS = {
 
 
 # --- 3. HELPER & FORMATTING FUNCTIONS ---
-
+# All helper functions are here and unchanged, omitting for brevity.
+# ... (append_to_google_sheet, calculate_age, get_verse_from_db, etc.) ...
 def append_to_google_sheet(data_row, sheet_name):
-    # ... (This function is unchanged)
     if not GOOGLE_CREDENTIALS_JSON:
         print("ERROR: Google credentials JSON not set in environment variables.")
         return False
@@ -79,7 +81,6 @@ def append_to_google_sheet(data_row, sheet_name):
         return False
 
 def calculate_age(dob_string):
-    # ... (This function is unchanged)
     try:
         birth_date = datetime.strptime(dob_string, "%d/%m/%Y").date()
         today = date.today()
@@ -89,7 +90,6 @@ def calculate_age(dob_string):
         return None
         
 def get_verse_from_db(passage, db_filename):
-    # ... (This function is unchanged)
     db_path = os.path.join(os.path.dirname(__file__), BIBLES_DIR, db_filename)
     if not os.path.exists(db_path):
         return f"Sorry, the selected Bible database file ({db_filename}) is missing."
@@ -130,7 +130,9 @@ def load_json_file(file_path):
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        # --- MODIFIED: Add logging to see the error ---
+        print(f"DEBUG: Error loading JSON file '{file_path}': {e}")
         return [] if any(x in file_path for x in ['lessons', 'hymn']) else {}
 
 def save_json_file(data, file_path):
@@ -138,7 +140,6 @@ def save_json_file(data, file_path):
         json.dump(data, f, indent=4)
 
 def get_current_lesson_index(user_class):
-    # ... (This function is unchanged)
     today = date.today()
     if user_class == "Primary Pals":
         anchor_date = PRIMARY_PALS_ANCHOR_DATE
@@ -150,7 +151,6 @@ def get_current_lesson_index(user_class):
     return week_difference if week_difference >= 0 else -1
 
 def format_hymn(hymn):
-    # ... (This function is unchanged)
     if not hymn: return "Sorry, I couldn't find a hymn with that number in your selected hymnbook."
     title, hymn_number = hymn.get('title', 'No Title'), hymn.get('number', '#')
     message = f"🎶 *Hymn #{hymn_number}: {title}*\n\n"
@@ -169,7 +169,6 @@ def format_hymn(hymn):
                 message += f"*{i}.*\n" + "\n".join(v_lines) + "\n\n"
     return message.strip()
 
-# --- NEW --- Helper function to format the weekly lesson
 def format_lesson(lesson):
     if not lesson: return "Lesson details could not be found."
     title = lesson.get('title', 'No Title')
@@ -185,7 +184,6 @@ def format_lesson(lesson):
     return message
 
 def get_ai_response(question, context):
-    # ... (This function is unchanged)
     if not gemini_model: return "Sorry, the AI thinking module is currently unavailable."
     prompt = ( "You are a friendly and helpful Sunday School assistant. Your answers must be based *only* on the provided lesson text (the context). If the answer is not in the text, say that you cannot answer based on the provided material. Keep your answers concise and easy to understand.\n\n" f"--- LESSON CONTEXT ---\n{context}\n\n" f"--- USER QUESTION ---\n{question}" )
     try:
@@ -221,7 +219,6 @@ def handle_bot_logic(user_id, message_text):
         save_json_file(users, user_file_path)
         return
         
-    # --- ADDED: Consistent way to go back to main menu from any sub-section
     if message_text_lower == 'm' and 'mode' in user_profile:
         user_profile = {}
         send_whatsapp_message(user_id, f"OK, returning to the main menu. {main_menu_text}")
@@ -261,22 +258,27 @@ def handle_bot_logic(user_id, message_text):
                 user_class = CLASSES[message_text_lower]
                 user_profile['lesson_class'] = user_class
                 
-                # Determine which lesson file to load
                 lesson_files = {
-                    "Beginners": LESSONS_FILE_BEGINNERS,
-                    "Primary Pals": LESSONS_FILE_PRIMARY_PALS,
-                    "Answer": LESSONS_FILE_ANSWER,
-                    "Search": LESSONS_FILE_SEARCH
+                    "Beginners": LESSONS_FILE_BEGINNERS, "Primary Pals": LESSONS_FILE_PRIMARY_PALS,
+                    "Answer": LESSONS_FILE_ANSWER, "Search": LESSONS_FILE_SEARCH
                 }
                 lesson_file = lesson_files.get(user_class)
-                lesson_file_path = os.path.join(os.path.dirname(__file__), lesson_file)
+                
+                # --- MODIFIED: Build the correct path using LESSONS_DIR ---
+                lesson_file_path = os.path.join(os.path.dirname(__file__), LESSONS_DIR, lesson_file)
+                
+                # --- DIAGNOSTIC LOGGING ---
+                print(f"DEBUG: Attempting to load lesson file from: {lesson_file_path}")
                 all_lessons = load_json_file(lesson_file_path)
-
+                print(f"DEBUG: Loaded {len(all_lessons)} lessons from the file.")
+                
                 lesson_index = get_current_lesson_index(user_class)
+                print(f"DEBUG: Calculated current lesson index as: {lesson_index}")
+                # --- END DIAGNOSTIC LOGGING ---
 
-                if 0 <= lesson_index < len(all_lessons):
+                if all_lessons and 0 <= lesson_index < len(all_lessons):
                     current_lesson = all_lessons[lesson_index]
-                    user_profile['current_lesson_data'] = current_lesson # Store lesson for AI context
+                    user_profile['current_lesson_data'] = current_lesson
                     
                     lesson_action_menu = (
                         f"This week's lesson for the *{user_class}* class is: *{current_lesson.get('title', 'N/A')}*\n\n"
@@ -288,15 +290,15 @@ def handle_bot_logic(user_id, message_text):
                     send_whatsapp_message(user_id, lesson_action_menu)
                     user_profile['lesson_step'] = 'awaiting_lesson_action'
                 else:
+                    # This is the error path. The debug logs above will tell us why we're here.
                     send_whatsapp_message(user_id, "Sorry, I couldn't find the current lesson for your class. Please contact an administrator.")
                     user_profile = {} # Reset
         
         elif step == 'awaiting_lesson_action':
-            if message_text_lower == '1': # Read lesson
+            if message_text_lower == '1':
                 lesson_data = user_profile.get('current_lesson_data')
                 formatted_lesson = format_lesson(lesson_data)
                 send_whatsapp_message(user_id, formatted_lesson)
-                # After sending, repeat the menu
                 lesson_action_menu = (
                     "What would you like to do next?\n"
                     "*1.* Read the full lesson again\n"
@@ -304,7 +306,7 @@ def handle_bot_logic(user_id, message_text):
                     "Type *m* to return to the main menu."
                 )
                 send_whatsapp_message(user_id, lesson_action_menu)
-            elif message_text_lower == '2': # Ask question
+            elif message_text_lower == '2':
                 send_whatsapp_message(user_id, "OK, please type your question about the lesson.")
                 user_profile['lesson_step'] = 'awaiting_ai_question'
             else:
@@ -313,12 +315,11 @@ def handle_bot_logic(user_id, message_text):
         elif step == 'awaiting_ai_question':
             question = message_text
             lesson_data = user_profile.get('current_lesson_data')
-            context = format_lesson(lesson_data) # Use the formatted lesson as context
+            context = format_lesson(lesson_data)
             
             ai_answer = get_ai_response(question, context)
             send_whatsapp_message(user_id, f"🤔 *Answer:*\n{ai_answer}")
             
-            # Return to the action menu
             user_profile['lesson_step'] = 'awaiting_lesson_action'
             lesson_action_menu = (
                 "You can ask another question, or choose an option:\n"
@@ -327,7 +328,9 @@ def handle_bot_logic(user_id, message_text):
                 "Type *m* to return to the main menu."
             )
             send_whatsapp_message(user_id, lesson_action_menu)
-
+            
+    # --- Other modes (Hymnbook, Bible, Camp Registration) are here and unchanged ---
+    # ... I am omitting them for brevity, but they should be in the final file ...
     # --- LOGIC FILLED IN: Mode Handler: Hymnbook ---
     elif user_profile.get('mode') == 'hymnbook':
         step = user_profile.get('hymn_step', 'start')
@@ -393,7 +396,6 @@ def handle_bot_logic(user_id, message_text):
 
     # --- Mode Handler: Camp Registration ---
     elif user_profile.get('mode') == 'camp_registration':
-        # ... (This logic is unchanged and complete)
         step = user_profile.get('registration_step', 'start')
         data = user_profile.setdefault('registration_data', {})
         reg_type = user_profile.get('registration_type', 'annual')
@@ -551,8 +553,9 @@ def handle_bot_logic(user_id, message_text):
         users[user_id] = user_profile
         save_json_file(users, user_file_path)
 
+# --- All remaining functions are here and unchanged ---
+# ... (_send_confirmation_message, send_whatsapp_message, webhook, health_check) ...
 def _send_confirmation_message(user_id, data, camp_name):
-    # ... (This function is unchanged)
     confirmation_message = (
         f"📝 *Please confirm your details for the {camp_name}:*\n\n"
         f"*Name:* {data.get('first_name', '')} {data.get('last_name', '')}\n"
@@ -573,7 +576,6 @@ def _send_confirmation_message(user_id, data, camp_name):
 
 
 def send_whatsapp_message(recipient_id, message_text):
-    # ... (This function is unchanged)
     if not all([WHATSAPP_TOKEN, PHONE_NUMBER_ID]):
         print("ERROR: WhatsApp credentials not set.")
         return
@@ -589,7 +591,6 @@ def send_whatsapp_message(recipient_id, message_text):
 
 @app.route('/whatsapp', methods=['GET', 'POST'])
 def whatsapp_webhook():
-    # ... (This function is unchanged)
     if request.method == 'GET':
         if request.args.get('hub.verify_token') == VERIFY_TOKEN:
             return request.args.get('hub.challenge'), 200
@@ -611,5 +612,4 @@ def whatsapp_webhook():
 
 @app.route('/')
 def health_check():
-    # ... (This function is unchanged)
     return "SundayBot with Camp Registration is running!", 200
