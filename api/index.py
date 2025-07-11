@@ -9,9 +9,31 @@ from datetime import datetime, date
 from dateutil.relativedelta import relativedelta, MO
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # --- 1. INITIALIZE FLASK & API CLIENTS ---
 app = Flask(__name__)
+
+# --- NEW: FIREBASE INITIALIZATION ---
+try:
+    # Get the single-line JSON from environment variable
+    firebase_creds_json = os.environ.get('FIREBASE_SERVICE_ACCOUNT_JSON')
+    if firebase_creds_json:
+        creds_dict = json.loads(firebase_creds_json)
+        cred = credentials.Certificate(creds_dict)
+        firebase_admin.initialize_app(cred)
+        db = firestore.client()
+        print("Firebase initialized successfully.")
+    else:
+        db = None
+        print("FIREBASE_SERVICE_ACCOUNT_JSON not set. Firestore is disabled.")
+except Exception as e:
+    db = None
+    print(f"Error initializing Firebase: {e}")
+
+
+# --- GEMINI INITIALIZATION ---
 try:
     gemini_api_key = os.environ.get('GEMINI_API_KEY')
     genai.configure(api_key=gemini_api_key)
@@ -32,7 +54,6 @@ YOUTH_CAMP_SHEET_NAME = os.environ.get('YOUTH_CAMP_SHEET_NAME', 'Youths Camp Reg
 ANCHOR_DATE = date(2024, 8, 21)
 PRIMARY_PALS_ANCHOR_DATE = date(2024, 9, 1)
 
-USERS_FILE = 'users.json'
 HYMNBOOKS_DIR = 'hymnbooks'
 BIBLES_DIR = 'bibles'
 LESSONS_DIR = 'lessons'
@@ -74,12 +95,6 @@ def append_to_google_sheet(data_row, sheet_name):
         return False
 
 def check_registration_status(identifier, sheet_name):
-    """
-    Searches a Google Sheet for a registration record by phone number or ID.
-    This function is now more robust, handling whitespace and case-insensitivity.
-    IMPORTANT: Your Google Sheet MUST have a header row. This function assumes
-    headers named 'Phone' and 'ID/Passport'.
-    """
     if not GOOGLE_CREDENTIALS_JSON: return None
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -92,14 +107,13 @@ def check_registration_status(identifier, sheet_name):
         clean_identifier = identifier.strip().lower()
         
         for record in records:
-            # Normalize data from the sheet for reliable comparison
             phone_in_sheet = str(record.get('Phone', '')).strip().lower()
             id_in_sheet = str(record.get('ID/Passport', '')).strip().lower()
             
             if clean_identifier == phone_in_sheet or clean_identifier == id_in_sheet:
-                return record # Return the entire found record
+                return record
                 
-        return None # No match found
+        return None
         
     except gspread.exceptions.SpreadsheetNotFound:
         print(f"ERROR: Spreadsheet '{sheet_name}' not found.")
@@ -149,20 +163,13 @@ def get_verse_from_db(passage, db_filename):
         print(f"SQLite Database Error: {e}")
         return "Sorry, I'm having trouble looking up the Bible verse right now."
 
-def get_user_file_path():
-    return f'/tmp/{USERS_FILE}' if 'VERCEL' in os.environ else os.path.join(os.path.dirname(__file__), USERS_FILE)
-
-def load_json_file(file_path):
+def load_json_file(file_path): # Used for static content like lessons/hymns
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"DEBUG: Error loading JSON file '{file_path}': {e}")
-        return [] if any(x in file_path for x in ['lessons', 'hymn']) else {}
-
-def save_json_file(data, file_path):
-    with open(file_path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=4)
+        print(f"DEBUG: Error loading static JSON file '{file_path}': {e}")
+        return []
 
 def get_current_lesson_index(user_class):
     today = date.today()
@@ -192,6 +199,7 @@ def format_hymn(hymn):
     return message.strip()
 
 def format_lesson(lesson, lesson_class):
+    # This function remains unchanged
     if not lesson: return "Lesson details could not be found."
     message_parts = []
     if lesson_class == "Search":
@@ -277,20 +285,21 @@ def get_ai_response(question, context):
 
 # --- MAIN BOT LOGIC HANDLER ---
 def handle_bot_logic(user_id, message_text):
-    user_file_path = get_user_file_path()
-    users = load_json_file(user_file_path)
+    if not db:
+        send_whatsapp_message(user_id, "Sorry, the bot is experiencing technical difficulties (Database connection failed). Please try again later.")
+        return
+
+    # --- Firestore State Management ---
+    session_ref = db.collection('sessions').document(user_id)
+    session_doc = session_ref.get()
+    user_profile = session_doc.to_dict() if session_doc.exists else {}
     
     message_text_lower = message_text.lower().strip()
-    user_profile = users.get(user_id, {})
-    original_profile_state = json.dumps(user_profile)
 
     main_menu_text = (
         "Welcome! 🙏\n\nPlease choose a section:\n\n"
-        "*1.* Weekly Lessons\n"
-        "*2.* Hymnbook\n"
-        "*3.* Bible Lookup\n"
-        "*4.* 2025 Regional Youths Camp Registration\n"
-        "*5.* 2025 Annual Camp Registration\n"
+        "*1.* Weekly Lessons\n*2.* Hymnbook\n*3.* Bible Lookup\n"
+        "*4.* 2025 Regional Youths Camp Registration\n*5.* 2025 Annual Camp Registration\n"
         "*6.* Check Registration Status"
     )
 
@@ -301,29 +310,19 @@ def handle_bot_logic(user_id, message_text):
             user_class = user_profile.get('lesson_class', 'your class')
             lesson_action_menu = (
                 f"OK, back to the lesson menu for *{user_class}*: *{title}*\n\n"
-                "What would you like to do?\n"
-                "*1.* Read the full lesson\n"
-                "*2.* Ask a question\n\n"
+                "What would you like to do?\n*1.* Read lesson\n*2.* Ask a question\n\n"
                 "Type *reset* to go to the main menu."
             )
             send_whatsapp_message(user_id, lesson_action_menu)
+            session_ref.set(user_profile)
         else:
-            user_profile = {}
+            session_ref.delete() # Clear state from Firestore
             msg = f"Your session has been reset. {main_menu_text}" if message_text_lower == 'reset' else f"OK, returning to the main menu. {main_menu_text}"
             send_whatsapp_message(user_id, msg)
-        
-        users[user_id] = user_profile
-        if not user_profile:
-             if user_id in users: del users[user_id]
-        save_json_file(users, user_file_path)
         return
 
     if 'mode' not in user_profile:
-        modes = {
-            '1': 'lessons', '2': 'hymnbook', '3': 'bible', 
-            '4': 'camp_registration', '5': 'camp_registration',
-            '6': 'check_status'
-        }
+        modes = {'1': 'lessons', '2': 'hymnbook', '3': 'bible', '4': 'camp_registration', '5': 'camp_registration', '6': 'check_status'}
         if message_text_lower in modes:
             user_profile['mode'] = modes[message_text_lower]
             if message_text_lower == '4': user_profile['registration_type'] = 'youths'
@@ -332,7 +331,9 @@ def handle_bot_logic(user_id, message_text):
             send_whatsapp_message(user_id, main_menu_text)
             return
 
+    # --- Module Logic ---
     if user_profile.get('mode') == 'lessons':
+        # This logic remains the same, but state will be saved to Firestore
         step = user_profile.get('lesson_step', 'start')
         if step == 'start':
             class_menu = "Please select your class:\n\n" + "\n".join([f"*{k}.* {v}" for k, v in CLASSES.items()])
@@ -362,7 +363,7 @@ def handle_bot_logic(user_id, message_text):
                     user_profile['lesson_step'] = 'awaiting_lesson_action'
                 else:
                     send_whatsapp_message(user_id, "Sorry, I couldn't find the current lesson for your class.")
-                    if user_id in users: del users[user_id]
+                    session_ref.delete()
         elif step == 'awaiting_lesson_action':
             if message_text_lower == '1':
                 formatted_lesson = format_lesson(user_profile.get('current_lesson_data'), user_profile.get('lesson_class'))
@@ -381,6 +382,7 @@ def handle_bot_logic(user_id, message_text):
             send_whatsapp_message(user_id, "You can ask another question, or type *m* to return to the lesson menu.")
 
     elif user_profile.get('mode') == 'hymnbook':
+        # This logic also remains the same
         step = user_profile.get('hymn_step', 'start')
         if step == 'start':
             hymnbook_menu = "Please select a hymnbook:\n\n" + "\n".join([f"*{k}.* {v['name']}" for k,v in HYMNBOOKS.items()])
@@ -405,6 +407,7 @@ def handle_bot_logic(user_id, message_text):
                 send_whatsapp_message(user_id, "You can enter another hymn number, or type *m* to go back.")
 
     elif user_profile.get('mode') == 'bible':
+        # This logic also remains the same
         step = user_profile.get('bible_step', 'start')
         if step == 'start':
             bible_menu = "Please select a Bible version:\n\n" + "\n".join([f"*{k}.* {v['name']}" for k,v in BIBLES.items()])
@@ -443,7 +446,6 @@ def handle_bot_logic(user_id, message_text):
             user_profile['registration_step'] = 'awaiting_id_passport'
         
         elif step == 'awaiting_id_passport':
-            # --- DUPLICATE CHECK ADDED HERE ---
             id_passport = message_text.strip()
             send_whatsapp_message(user_id, f"Checking if `{id_passport}` is already registered...")
             existing_reg = check_registration_status(id_passport, sheet_to_use)
@@ -451,12 +453,13 @@ def handle_bot_logic(user_id, message_text):
             if isinstance(existing_reg, dict):
                 reg_name = f"{existing_reg.get('FirstName', '')} {existing_reg.get('LastName', '')}"
                 send_whatsapp_message(user_id, f"It looks like you are already registered under the name *{reg_name}* with this ID. No need to register again!\n\nReturning to the main menu.")
-                if user_id in users: del users[user_id] # Reset state
-            elif existing_reg == "Error" or existing_reg == "Spreadsheet-Not-Found":
+                session_ref.delete()
+                return
+            elif existing_reg in ["Error", "Spreadsheet-Not-Found"]:
                 send_whatsapp_message(user_id, "I'm having trouble checking for duplicates right now. Please try again later or contact an admin.\n\nReturning to main menu.")
-                if user_id in users: del users[user_id] # Reset state
+                session_ref.delete()
+                return
             else:
-                # Not a duplicate, proceed with registration
                 data['id_passport'] = id_passport
                 send_whatsapp_message(user_id, "Got it. What is your *date of birth*?\n\nPlease use DD/MM/YYYY format (e.g., 25/12/1998).")
                 user_profile['registration_step'] = 'awaiting_dob'
@@ -536,12 +539,12 @@ def handle_bot_logic(user_id, message_text):
                 success = append_to_google_sheet(row, sheet_to_use)
                 msg = f"✅ Registration successful for the {camp_name}!" if success else "⚠️ There was a problem submitting. Please contact an administrator."
                 send_whatsapp_message(user_id, msg)
-                user_profile = {}
-                if user_id in users: del users[user_id]
-            elif message_text_lower == 'restart':
-                user_profile.update({'registration_data': {}, 'registration_step': 'start'})
-                handle_bot_logic(user_id, "reset")
+                session_ref.delete()
                 return
+            elif message_text_lower == 'restart':
+                user_profile['registration_step'] = 'start'
+                user_profile['registration_data'] = {}
+                handle_bot_logic(user_id, "restart_internal") # Use internal command to avoid full reset
             else: send_whatsapp_message(user_id, "Please type *confirm* or *restart*.")
     
     elif user_profile.get('mode') == 'check_status':
@@ -568,7 +571,6 @@ def handle_bot_logic(user_id, message_text):
             elif status == "Error":
                  send_whatsapp_message(user_id, "Sorry, a technical error occurred while checking the sheet. Please try again later.")
             elif isinstance(status, dict):
-                # The keys here ('FirstName', etc.) MUST match your Google Sheet headers.
                 confirm_msg = (
                     f"✅ *Registration Found!* ✅\n\n"
                     f"Hi *{status.get('FirstName', '')} {status.get('LastName', '')}*!\n"
@@ -581,11 +583,12 @@ def handle_bot_logic(user_id, message_text):
             else:
                 send_whatsapp_message(user_id, f"❌ *No Registration Found*\n\nI could not find a registration matching '{identifier}'. Please make sure the number is correct or proceed with registration from the main menu.")
             
-            if user_id in users: del users[user_id]
+            session_ref.delete()
+            return
 
-    if json.dumps(user_profile) != original_profile_state:
-        users[user_id] = user_profile
-        save_json_file(users, user_file_path)
+    # --- Save state to Firestore at the end of the interaction ---
+    session_ref.set(user_profile)
+
 
 def _send_confirmation_message(user_id, data, camp_name):
     confirmation_message = (
@@ -642,4 +645,4 @@ def whatsapp_webhook():
 
 @app.route('/')
 def health_check():
-    return "SundayBot with Camp Registration is running!", 200
+    return "SundayBot with Firebase is running!", 200
