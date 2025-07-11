@@ -49,7 +49,7 @@ GOOGLE_CREDENTIALS_JSON = os.environ.get('GOOGLE_CREDENTIALS_JSON')
 ANNUAL_CAMP_SHEET_NAME = os.environ.get('ANNUAL_CAMP_SHEET_NAME', 'Camp Registrations 2025')
 YOUTH_CAMP_SHEET_NAME = os.environ.get('YOUTH_CAMP_SHEET_NAME', 'Youths Camp Registrations 2025')
 
-# --- NEW: ADMIN CONFIGURATION ---
+# --- ADMIN CONFIGURATION ---
 # IMPORTANT: Add your WhatsApp number(s) here in international format
 ADMIN_NUMBERS = ['+263718704505'] 
 
@@ -59,7 +59,10 @@ PRIMARY_PALS_ANCHOR_DATE = date(2024, 9, 1)
 HYMNBOOKS_DIR = 'hymnbooks'
 BIBLES_DIR = 'bibles'
 LESSONS_DIR = 'lessons'
-# ... (lesson file names remain the same)
+LESSONS_FILE_SEARCH = 'search_lessons.json'
+LESSONS_FILE_ANSWER = 'answer_lessons.json'
+LESSONS_FILE_BEGINNERS = 'beginners_lessons.json'
+LESSONS_FILE_PRIMARY_PALS = 'primary_pals_lessons.json'
 
 CLASSES = { "1": "Beginners", "2": "Primary Pals", "3": "Answer", "4": "Search" }
 HYMNBOOKS = { "1": {"name": "Yellow Hymnbook Shona", "file": "shona_hymns.json"}, "2": {"name": "Sing Praises Unto Our King", "file": "english_hymns.json"} }
@@ -78,6 +81,7 @@ def check_registration_status_firestore(identifier, camp_type):
     if not db: return "Error"
     try:
         collection_name = get_firestore_collection_name(camp_type)
+        # Use the identifier directly as the document ID
         doc_ref = db.collection(collection_name).document(identifier.strip())
         doc = doc_ref.get()
         if doc.exists:
@@ -99,18 +103,20 @@ def export_registrations_to_sheet(camp_type):
     sheet_name = YOUTH_CAMP_SHEET_NAME if camp_type == 'youths' else ANNUAL_CAMP_SHEET_NAME
     
     try:
-        # 1. Fetch all data from Firestore
         docs = db.collection(collection_name).stream()
         all_rows = []
         
-        # Define headers that match your sheet
         headers = ["Timestamp", "FirstName", "LastName", "DateOfBirth", "Age", "Gender", "ID/Passport", "Phone", "SalvationStatus", "Dependents", "Volunteering", "VolunteerDepartment", "NextOfKinName", "NextOfKinPhone", "CampStay"]
         all_rows.append(headers)
 
         for doc in docs:
             data = doc.to_dict()
+            # --- FIX: Convert Firestore timestamp to a readable string ---
+            timestamp_obj = data.get("timestamp")
+            timestamp_str = timestamp_obj.strftime("%Y-%m-%d %H:%M:%S") if isinstance(timestamp_obj, datetime) else ""
+            
             row = [
-                data.get("timestamp", ""),
+                timestamp_str,
                 data.get("first_name", ""),
                 data.get("last_name", ""),
                 data.get("dob", ""),
@@ -131,14 +137,16 @@ def export_registrations_to_sheet(camp_type):
         if len(all_rows) <= 1:
             return "No registrations found in the database to export."
 
-        # 2. Write data to Google Sheets
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        sheet = client.open(sheet_name).sheet1
         
-        # 3. Clear the sheet and append all rows at once
+        try:
+            sheet = client.open(sheet_name).sheet1
+        except gspread.exceptions.SpreadsheetNotFound:
+            return f"Error: Spreadsheet named '{sheet_name}' not found. Please create it or check the name."
+
         sheet.clear()
         sheet.append_rows(all_rows, value_input_option='USER_ENTERED')
         
@@ -148,13 +156,13 @@ def export_registrations_to_sheet(camp_type):
         print(f"Error during export: {e}")
         return f"⚠️ An error occurred during the export process: {e}"
 
-# ... (calculate_age, get_verse_from_db, format_hymn, etc. remain unchanged) ...
 def calculate_age(dob_string):
     try:
         birth_date = datetime.strptime(dob_string, "%d/%m/%Y").date()
         today = date.today()
         return today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
     except ValueError: return None
+
 def get_verse_from_db(passage, db_filename):
     db_path = os.path.join(os.path.dirname(__file__), BIBLES_DIR, db_filename)
     if not os.path.exists(db_path): return f"Sorry, the selected Bible database file ({db_filename}) is missing."
@@ -186,12 +194,14 @@ def get_verse_from_db(passage, db_filename):
     except Exception as e:
         print(f"SQLite Database Error: {e}")
         return "Sorry, I'm having trouble looking up the Bible verse right now."
+
 def load_json_file(file_path):
     try:
         with open(file_path, 'r', encoding='utf-8') as f: return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as e:
         print(f"DEBUG: Error loading static JSON file '{file_path}': {e}")
         return []
+
 def get_current_lesson_index(user_class):
     today = date.today()
     anchor = PRIMARY_PALS_ANCHOR_DATE if user_class == "Primary Pals" else ANCHOR_DATE
@@ -199,6 +209,7 @@ def get_current_lesson_index(user_class):
     current_week_start = today + relativedelta(weekday=MO(-1))
     week_diff = (current_week_start - anchor_week_start).days // 7
     return week_diff if week_diff >= 0 else -1
+
 def format_hymn(hymn):
     if not hymn: return "Sorry, I couldn't find a hymn with that number."
     title, hymn_number = hymn.get('title', 'No Title'), hymn.get('number', '#')
@@ -217,6 +228,7 @@ def format_hymn(hymn):
             for i, v_lines in enumerate(part.get('verses', []), 1):
                 message += f"*{i}.*\n" + "\n".join(v_lines) + "\n\n"
     return message.strip()
+
 def format_lesson(lesson, lesson_class):
     if not lesson: return "Lesson details could not be found."
     message_parts = []
@@ -271,9 +283,20 @@ def format_lesson(lesson, lesson_class):
         main_text = "\n".join(lesson.get('text', []))
         message_parts.append(f"📖 *{title}*\n\n📌 *Memory Verse:*\n_{memory_verse}_\n\n📝 *Lesson Text:*\n{main_text}")
     return "\n\n".join(message_parts)
+
 def get_ai_response(question, context):
     if not gemini_model: return "Sorry, the AI thinking module is currently unavailable."
-    prompt = ( "You are a friendly and helpful Sunday School assistant... (prompt unchanged)")
+    prompt = (
+        "You are a friendly and helpful Sunday School assistant. "
+        "Your primary role is to answer questions based *only* on the provided lesson material. "
+        "Do not use any external knowledge or information outside of this context. "
+        "If the answer cannot be found in the lesson, politely state that the information "
+        "is not available in the provided text. Keep your answers clear, concise, "
+        "and appropriate for the lesson's age group.\n\n"
+        f"--- START OF LESSON CONTEXT ---\n{context}\n--- END OF LESSON CONTEXT ---\n\n"
+        f"Based on the lesson above, please answer the following question:\n"
+        f"Question: \"{question}\""
+    )
     try:
         response = gemini_model.generate_content(prompt)
         return response.text.strip()
@@ -294,8 +317,12 @@ def handle_bot_logic(user_id, message_text):
     
     message_text_lower = message_text.lower().strip()
 
-    # --- NEW: Admin Command Handler ---
-    if user_id in ADMIN_NUMBERS:
+    # --- FIX: NORMALIZED ADMIN CHECK ---
+    # This removes all non-digit characters for a reliable comparison
+    clean_user_id = re.sub(r'\D', '', user_id)
+    clean_admin_numbers = [re.sub(r'\D', '', num) for num in ADMIN_NUMBERS]
+
+    if clean_user_id in clean_admin_numbers:
         if message_text_lower.startswith('export'):
             parts = message_text_lower.split()
             if len(parts) == 2 and parts[1] in ['youths', 'annual']:
@@ -332,7 +359,98 @@ def handle_bot_logic(user_id, message_text):
             return
 
     # --- Module Logic ---
-    if user_profile.get('mode') == 'camp_registration':
+    if user_profile.get('mode') == 'lessons':
+        step = user_profile.get('lesson_step', 'start')
+        if step == 'start':
+            class_menu = "Please select your class:\n\n" + "\n".join([f"*{k}.* {v}" for k, v in CLASSES.items()])
+            send_whatsapp_message(user_id, class_menu)
+            user_profile['lesson_step'] = 'awaiting_class_choice'
+        elif step == 'awaiting_class_choice':
+            if message_text_lower not in CLASSES:
+                send_whatsapp_message(user_id, "Invalid selection. Please choose a number from the list.")
+            else:
+                user_class = CLASSES[message_text_lower]
+                user_profile['lesson_class'] = user_class
+                lesson_files = { "Beginners": LESSONS_FILE_BEGINNERS, "Primary Pals": LESSONS_FILE_PRIMARY_PALS, "Answer": LESSONS_FILE_ANSWER, "Search": LESSONS_FILE_SEARCH }
+                lesson_file_path = os.path.join(os.path.dirname(__file__), LESSONS_DIR, lesson_files.get(user_class))
+                raw_data = load_json_file(lesson_file_path)
+                if user_class == "Primary Pals" and isinstance(raw_data, dict):
+                    all_lessons = raw_data.get('primary_pals_lessons', [])
+                elif isinstance(raw_data, list):
+                    all_lessons = raw_data
+                else: all_lessons = []
+                lesson_index = get_current_lesson_index(user_class)
+                if all_lessons and 0 <= lesson_index < len(all_lessons):
+                    current_lesson = all_lessons[lesson_index]
+                    user_profile['current_lesson_data'] = current_lesson
+                    title = current_lesson.get('title') or current_lesson.get('lessonTitle', 'N/A')
+                    lesson_action_menu = (f"This week's lesson for *{user_class}* is: *{title}*\n\nWhat would you like to do?\n*1.* Read the full lesson\n*2.* Ask a question\n\nType *m* to return.")
+                    send_whatsapp_message(user_id, lesson_action_menu)
+                    user_profile['lesson_step'] = 'awaiting_lesson_action'
+                else:
+                    send_whatsapp_message(user_id, "Sorry, I couldn't find the current lesson for your class.")
+                    session_ref.delete()
+        elif step == 'awaiting_lesson_action':
+            if message_text_lower == '1':
+                formatted_lesson = format_lesson(user_profile.get('current_lesson_data'), user_profile.get('lesson_class'))
+                send_whatsapp_message(user_id, formatted_lesson)
+                send_whatsapp_message(user_id, "What next?\n*1.* Read again\n*2.* Ask a question\n\nType *m* to return.")
+            elif message_text_lower == '2':
+                send_whatsapp_message(user_id, "OK, please type your question about the lesson.\n\n(Type *m* to return to the lesson menu).")
+                user_profile['lesson_step'] = 'awaiting_ai_question'
+            else:
+                send_whatsapp_message(user_id, "Invalid choice. Please enter *1* or *2*.")
+        elif step == 'awaiting_ai_question':
+            context = format_lesson(user_profile.get('current_lesson_data'), user_profile.get('lesson_class'))
+            send_whatsapp_message(user_id, "_Thinking..._ 🤔")
+            ai_answer = get_ai_response(message_text, context)
+            send_whatsapp_message(user_id, ai_answer)
+            send_whatsapp_message(user_id, "You can ask another question, or type *m* to return to the lesson menu.")
+
+    elif user_profile.get('mode') == 'hymnbook':
+        step = user_profile.get('hymn_step', 'start')
+        if step == 'start':
+            hymnbook_menu = "Please select a hymnbook:\n\n" + "\n".join([f"*{k}.* {v['name']}" for k,v in HYMNBOOKS.items()])
+            send_whatsapp_message(user_id, hymnbook_menu)
+            user_profile['hymn_step'] = 'awaiting_hymnbook_choice'
+        elif step == 'awaiting_hymnbook_choice':
+            if message_text_lower not in HYMNBOOKS:
+                send_whatsapp_message(user_id, "Invalid selection. Please choose a number from the list.")
+            else:
+                chosen_book = HYMNBOOKS[message_text_lower]
+                user_profile['hymnbook_file'] = chosen_book['file']
+                send_whatsapp_message(user_id, f"Great! You've selected *{chosen_book['name']}*. Please enter a hymn number.\n\nType *m* to return.")
+                user_profile['hymn_step'] = 'awaiting_hymn_number'
+        elif step == 'awaiting_hymn_number':
+            if not message_text.strip().isdigit():
+                send_whatsapp_message(user_id, "Please enter a valid number.")
+            else:
+                hymn_file_path = os.path.join(os.path.dirname(__file__), HYMNBOOKS_DIR, user_profile['hymnbook_file'])
+                all_hymns = load_json_file(hymn_file_path)
+                found_hymn = next((h for h in all_hymns if str(h.get('number')) == message_text.strip()), None)
+                send_whatsapp_message(user_id, format_hymn(found_hymn))
+                send_whatsapp_message(user_id, "You can enter another hymn number, or type *m* to go back.")
+
+    elif user_profile.get('mode') == 'bible':
+        step = user_profile.get('bible_step', 'start')
+        if step == 'start':
+            bible_menu = "Please select a Bible version:\n\n" + "\n".join([f"*{k}.* {v['name']}" for k,v in BIBLES.items()])
+            send_whatsapp_message(user_id, bible_menu)
+            user_profile['bible_step'] = 'awaiting_bible_choice'
+        elif step == 'awaiting_bible_choice':
+            if message_text_lower not in BIBLES:
+                send_whatsapp_message(user_id, "Invalid selection. Please choose a number from the list.")
+            else:
+                chosen_bible = BIBLES[message_text_lower]
+                user_profile['bible_file'] = chosen_bible['file']
+                send_whatsapp_message(user_id, f"You've selected the *{chosen_bible['name']}*. Please enter a passage (e.g., John 3:16).\n\nType *m* to return.")
+                user_profile['bible_step'] = 'awaiting_passage'
+        elif step == 'awaiting_passage':
+            verse_text = get_verse_from_db(message_text.strip(), user_profile['bible_file'])
+            send_whatsapp_message(user_id, verse_text)
+            send_whatsapp_message(user_id, "You can enter another passage, or type *m* to go back.")
+    
+    elif user_profile.get('mode') == 'camp_registration':
         step = user_profile.get('registration_step', 'start')
         data = user_profile.setdefault('registration_data', {})
         reg_type = user_profile.get('registration_type', 'annual')
@@ -374,8 +492,7 @@ def handle_bot_logic(user_id, message_text):
             data['last_name'] = message_text.strip()
             send_whatsapp_message(user_id, "Got it. What is your *date of birth*? (DD/MM/YYYY)")
             user_profile['registration_step'] = 'awaiting_dob'
-
-        # ... (The rest of the registration steps are the same: dob, gender, phone, etc.)
+        
         elif step == 'awaiting_dob':
             age = calculate_age(message_text.strip())
             if not age: send_whatsapp_message(user_id, "That doesn't look right. Please use DD/MM/YYYY format.")
@@ -495,16 +612,10 @@ def handle_bot_logic(user_id, message_text):
             
             session_ref.delete()
             return
-
-    # ... (other modes like lessons, bible, hymnbook)
-    # They will work as before, but their state is now managed by Firestore
     
-    # Save state to Firestore at the end of the interaction
     session_ref.set(user_profile)
 
-# ... (_send_confirmation_message, send_whatsapp_message, and Flask routes are unchanged)
 def _send_confirmation_message(user_id, data, camp_name):
-    # This function is used to show the user their data before confirming
     confirmation_message = (
         f"📝 *Please confirm your details for the {camp_name}:*\n\n"
         f"*Name:* {data.get('first_name', '')} {data.get('last_name', '')}\n"
