@@ -5,3 +5,4 @@ python-dateutil
 gspread
 oauth2client
 redis
+firebase-admin
