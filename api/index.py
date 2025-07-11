@@ -1,5 +1,3 @@
-# api/index.py
-
 import os
 import json
 import requests
@@ -81,7 +79,7 @@ def calculate_age(dob_string):
         today = date.today()
         return today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
     except ValueError: return None
-        
+    
 def get_verse_from_db(passage, db_filename):
     db_path = os.path.join(os.path.dirname(__file__), BIBLES_DIR, db_filename)
     if not os.path.exists(db_path):
@@ -141,7 +139,6 @@ def get_current_lesson_index(user_class):
 
 def format_hymn(hymn):
     if not hymn: return "Sorry, I couldn't find a hymn with that number."
-    # ... (code is correct, omitting for brevity) ...
     title, hymn_number = hymn.get('title', 'No Title'), hymn.get('number', '#')
     message = f"🎶 *Hymn #{hymn_number}: {title}*\n\n"
     verses, chorus, parts = hymn.get('verses', []), hymn.get('chorus', []), hymn.get('parts', [])
@@ -159,7 +156,6 @@ def format_hymn(hymn):
                 message += f"*{i}.*\n" + "\n".join(v_lines) + "\n\n"
     return message.strip()
 
-# --- UPGRADED: Rich formatting for all lesson types ---
 def format_lesson(lesson, lesson_class):
     if not lesson: return "Lesson details could not be found."
     
@@ -241,10 +237,30 @@ def format_lesson(lesson, lesson_class):
     return "\n\n".join(message_parts)
 
 def get_ai_response(question, context):
-    if not gemini_model: return "Sorry, the AI thinking module is currently unavailable."
-    prompt = ( "You are a friendly and helpful Sunday School assistant... (rest of prompt)" )
+    """
+    Generates a response from the Gemini AI model based on a user's question
+    and the context of the current lesson.
+    """
+    if not gemini_model:
+        return "Sorry, the AI thinking module is currently unavailable."
+
+    # This enhanced prompt instructs the AI to answer only from the provided context,
+    # making it more reliable for a lesson-based Q&A.
+    prompt = (
+        "You are a friendly and helpful Sunday School assistant. "
+        "Your primary role is to answer questions based *only* on the provided lesson material. "
+        "Do not use any external knowledge or information outside of this context. "
+        "If the answer cannot be found in the lesson, politely state that the information "
+        "is not available in the provided text. Keep your answers clear, concise, "
+        "and appropriate for the lesson's age group.\n\n"
+        f"--- START OF LESSON CONTEXT ---\n{context}\n--- END OF LESSON CONTEXT ---\n\n"
+        f"Based on the lesson above, please answer the following question:\n"
+        f"Question: \"{question}\""
+    )
+
     try:
-        return gemini_model.generate_content(prompt).text.strip()
+        response = gemini_model.generate_content(prompt)
+        return response.text.strip()
     except Exception as e:
         print(f"Google Gemini API Error: {e}")
         return "I'm having a little trouble thinking right now. Please try again in a moment."
@@ -261,11 +277,29 @@ def handle_bot_logic(user_id, message_text):
 
     main_menu_text = "Welcome! 🙏\n\nPlease choose a section:\n\n*1.* Weekly Lessons\n*2.* Hymnbook\n*3.* Bible Lookup\n*4.* 2025 Regional Youths Camp Registration\n*5.* 2025 Annual Camp Registration"
 
-    if (message_text_lower == 'reset') or (message_text_lower == 'm' and 'mode' in user_profile):
-        user_profile = {}
-        msg = f"Your session has been reset. {main_menu_text}" if message_text_lower == 'reset' else f"OK, returning to the main menu. {main_menu_text}"
-        send_whatsapp_message(user_id, msg)
-        if user_id in users: del users[user_id]
+    # Global command to reset state or go to main menu
+    if (message_text_lower == 'reset') or (user_profile.get('mode') and message_text_lower == 'm'):
+        # If user is in the middle of a Q&A session, 'm' should take them to the lesson menu, not the main menu.
+        if user_profile.get('lesson_step') == 'awaiting_ai_question' and message_text_lower == 'm':
+            user_profile['lesson_step'] = 'awaiting_lesson_action'
+            title = user_profile.get('current_lesson_data', {}).get('title') or user_profile.get('current_lesson_data', {}).get('lessonTitle', 'N/A')
+            user_class = user_profile.get('lesson_class', 'your class')
+            lesson_action_menu = (
+                f"OK, back to the lesson menu for *{user_class}*: *{title}*\n\n"
+                "What would you like to do?\n"
+                "*1.* Read the full lesson\n"
+                "*2.* Ask a question about the lesson\n\n"
+                "Type *reset* to go to the main menu."
+            )
+            send_whatsapp_message(user_id, lesson_action_menu)
+        else:
+            user_profile = {}
+            msg = f"Your session has been reset. {main_menu_text}" if message_text_lower == 'reset' else f"OK, returning to the main menu. {main_menu_text}"
+            send_whatsapp_message(user_id, msg)
+        
+        users[user_id] = user_profile
+        if not user_profile: # If profile is now empty, remove user from dict
+             if user_id in users: del users[user_id]
         save_json_file(users, user_file_path)
         return
 
@@ -279,7 +313,7 @@ def handle_bot_logic(user_id, message_text):
             send_whatsapp_message(user_id, main_menu_text)
             return
 
-    # --- Mode Handler: Lessons (Logic is now correct) ---
+    # --- Mode Handler: Lessons (Polished and functional) ---
     if user_profile.get('mode') == 'lessons':
         step = user_profile.get('lesson_step', 'start')
 
@@ -316,31 +350,38 @@ def handle_bot_logic(user_id, message_text):
                     user_profile['current_lesson_data'] = current_lesson
                     
                     title = current_lesson.get('title') or current_lesson.get('lessonTitle', 'N/A')
-                    lesson_action_menu = f"This week's lesson for *{user_class}* is: *{title}*\n\nWhat would you like to do?\n*1.* Read the full lesson\n*2.* Ask a question\n\nType *m* to return."
+                    lesson_action_menu = (
+                        f"This week's lesson for *{user_class}* is: *{title}*\n\n"
+                        "What would you like to do?\n"
+                        "*1.* Read the full lesson\n"
+                        "*2.* Ask a question about the lesson\n\n"
+                        "Type *m* to return to the main menu."
+                    )
                     send_whatsapp_message(user_id, lesson_action_menu)
                     user_profile['lesson_step'] = 'awaiting_lesson_action'
                 else:
                     send_whatsapp_message(user_id, "Sorry, I couldn't find the current lesson for your class.")
-                    user_profile = {}
+                    if user_id in users: del users[user_id] # Reset state
         
         elif step == 'awaiting_lesson_action':
             if message_text_lower == '1':
                 formatted_lesson = format_lesson(user_profile.get('current_lesson_data'), user_profile.get('lesson_class'))
                 send_whatsapp_message(user_id, formatted_lesson)
-                send_whatsapp_message(user_id, "What next?\n*1.* Read again\n*2.* Ask a question\n\nType *m* to return.")
+                send_whatsapp_message(user_id, "You can now read the lesson above. What would you like to do next?\n*1.* Read again\n*2.* Ask a question")
             elif message_text_lower == '2':
-                send_whatsapp_message(user_id, "OK, please type your question about the lesson.")
+                send_whatsapp_message(user_id, "OK, you can now ask me anything about the lesson. What is your question?\n\n(Type *m* when you're done to return to the lesson menu).")
                 user_profile['lesson_step'] = 'awaiting_ai_question'
             else:
-                send_whatsapp_message(user_id, "Invalid choice. Please enter *1* or *2*.")
+                send_whatsapp_message(user_id, "Invalid choice. Please enter *1* to read or *2* to ask a question.")
         
         elif step == 'awaiting_ai_question':
             context = format_lesson(user_profile.get('current_lesson_data'), user_profile.get('lesson_class'))
-            ai_answer = get_ai_response(message_text, context)
-            send_whatsapp_message(user_id, f"🤔 *Answer:*\n{ai_answer}")
             
-            user_profile['lesson_step'] = 'awaiting_lesson_action'
-            send_whatsapp_message(user_id, "You can ask another question, or choose an option:\n*1.* Read lesson\n*2.* Ask again\n\nType *m* to return.")
+            send_whatsapp_message(user_id, "_Thinking..._ 🤔")
+            ai_answer = get_ai_response(message_text, context)
+            send_whatsapp_message(user_id, ai_answer)
+            
+            send_whatsapp_message(user_id, "I hope that helps! You can ask another question, or type *m* to return to the lesson menu.")
 
     # --- Other modes (Hymnbook, Bible, Camp Registration) are unchanged ---
     elif user_profile.get('mode') == 'hymnbook':
@@ -387,7 +428,6 @@ def handle_bot_logic(user_id, message_text):
             send_whatsapp_message(user_id, "You can enter another passage, or type *m* to go back.")
 
     elif user_profile.get('mode') == 'camp_registration':
-        # ... (This logic is correct and complete, omitting for brevity) ...
         step = user_profile.get('registration_step', 'start')
         data = user_profile.setdefault('registration_data', {})
         reg_type = user_profile.get('registration_type', 'annual')
@@ -496,7 +536,6 @@ def handle_bot_logic(user_id, message_text):
         save_json_file(users, user_file_path)
 
 def _send_confirmation_message(user_id, data, camp_name):
-    # ... (code is correct, omitting for brevity) ...
     confirmation_message = (
         f"📝 *Please confirm your details for the {camp_name}:*\n\n"
         f"*Name:* {data.get('first_name', '')} {data.get('last_name', '')}\n"
@@ -537,7 +576,6 @@ def whatsapp_webhook():
         return 'Verification token mismatch', 403
     if request.method == 'POST':
         data = request.get_json()
-        # print(f"Incoming data: {json.dumps(data, indent=2)}") # Can be noisy, uncomment if needed
         try:
             if data and 'entry' in data:
                 for entry in data['entry']:
