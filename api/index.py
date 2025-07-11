@@ -329,12 +329,30 @@ def handle_bot_logic(user_id, message_text):
             send_text_message(user_id, "Invalid export command. Use `export youths` or `export annual`.")
             return
 
+    # --- FIX: Re-ordered logic to process input before checking for an empty profile ---
+    
+    # 1. Handle session reset first
     if message_text_lower == 'reset_session':
         session_ref.delete()
         user_profile = {}
-    
-    if not user_profile:
-        # --- FIX: Shortened titles to be under 24 characters ---
+
+    # 2. Process incoming selections that define or change the mode
+    if message_text_lower.startswith("mode_"):
+        mode = message_text_lower.split('_')[1]
+        user_profile['mode'] = mode
+        if mode == 'camp_reg':
+            user_profile['registration_type'] = message_text_lower.split('_')[2]
+            user_profile['mode'] = 'camp_registration'
+        # Clear old step data to prevent conflicts between modes
+        keys_to_clear = [k for k in user_profile if k.endswith('_step') or k.endswith('_data')]
+        for key in keys_to_clear:
+            if key in user_profile:
+                del user_profile[key]
+
+    mode = user_profile.get('mode')
+
+    # 3. If there's no mode, show the main menu
+    if not mode:
         interactive = {
             "type": "list",
             "header": {"type": "text", "text": "Welcome to SundayBot 🙏"},
@@ -360,15 +378,7 @@ def handle_bot_logic(user_id, message_text):
         send_interactive_message(user_id, interactive)
         return
 
-    if message_text_lower.startswith("mode_"):
-        mode = message_text_lower.split('_')[1]
-        user_profile['mode'] = mode
-        if mode == 'camp_reg':
-            user_profile['registration_type'] = message_text_lower.split('_')[2]
-            user_profile['mode'] = 'camp_registration'
-    
-    mode = user_profile.get('mode')
-
+    # 4. Execute logic for the current mode
     if mode == 'lessons':
         step = user_profile.get('lesson_step', 'start')
         if step == 'start':
@@ -592,6 +602,7 @@ def handle_bot_logic(user_id, message_text):
             session_ref.delete()
             return
     
+    # 5. Save the final state to Firestore
     session_ref.set(user_profile)
 
 def _send_confirmation_message(user_id, data, camp_name):
