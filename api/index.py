@@ -73,6 +73,43 @@ def append_to_google_sheet(data_row, sheet_name):
         print(f"Error appending to Google Sheet: {e}")
         return False
 
+def check_registration_status(identifier, sheet_name):
+    """
+    Searches a Google Sheet for a registration record by phone number or ID.
+    """
+    if not GOOGLE_CREDENTIALS_JSON: return None
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+        sheet = client.open(sheet_name).sheet1
+
+        # gspread.exceptions.WorksheetNotFound can be an issue if sheet name is wrong
+        
+        # Fetch all records. Note: The first row of your sheet MUST be headers.
+        # This function assumes headers like: 'Phone' and 'ID/Passport'
+        records = sheet.get_all_records()
+        
+        # Search for the identifier in the 'Phone' or 'ID/Passport' columns
+        for record in records:
+            # Check if keys exist to prevent errors if column names change
+            # Case-insensitive matching by converting both to string
+            phone_in_sheet = str(record.get('Phone', '')).strip()
+            id_in_sheet = str(record.get('ID/Passport', '')).strip()
+            
+            if identifier.strip() == phone_in_sheet or identifier.strip() == id_in_sheet:
+                return record # Return the entire found record
+                
+        return None # No match found
+        
+    except gspread.exceptions.SpreadsheetNotFound:
+        print(f"ERROR: Spreadsheet '{sheet_name}' not found.")
+        return "Spreadsheet-Not-Found"
+    except Exception as e:
+        print(f"Error checking Google Sheet: {e}")
+        return None
+
 def calculate_age(dob_string):
     try:
         birth_date = datetime.strptime(dob_string, "%d/%m/%Y").date()
@@ -244,8 +281,6 @@ def get_ai_response(question, context):
     if not gemini_model:
         return "Sorry, the AI thinking module is currently unavailable."
 
-    # This enhanced prompt instructs the AI to answer only from the provided context,
-    # making it more reliable for a lesson-based Q&A.
     prompt = (
         "You are a friendly and helpful Sunday School assistant. "
         "Your primary role is to answer questions based *only* on the provided lesson material. "
@@ -275,11 +310,17 @@ def handle_bot_logic(user_id, message_text):
     user_profile = users.get(user_id, {})
     original_profile_state = json.dumps(user_profile)
 
-    main_menu_text = "Welcome! 🙏\n\nPlease choose a section:\n\n*1.* Weekly Lessons\n*2.* Hymnbook\n*3.* Bible Lookup\n*4.* 2025 Regional Youths Camp Registration\n*5.* 2025 Annual Camp Registration"
+    main_menu_text = (
+        "Welcome! 🙏\n\nPlease choose a section:\n\n"
+        "*1.* Weekly Lessons\n"
+        "*2.* Hymnbook\n"
+        "*3.* Bible Lookup\n"
+        "*4.* 2025 Regional Youths Camp Registration\n"
+        "*5.* 2025 Annual Camp Registration\n"
+        "*6.* Check Registration Status"
+    )
 
-    # Global command to reset state or go to main menu
     if (message_text_lower == 'reset') or (user_profile.get('mode') and message_text_lower == 'm'):
-        # If user is in the middle of a Q&A session, 'm' should take them to the lesson menu, not the main menu.
         if user_profile.get('lesson_step') == 'awaiting_ai_question' and message_text_lower == 'm':
             user_profile['lesson_step'] = 'awaiting_lesson_action'
             title = user_profile.get('current_lesson_data', {}).get('title') or user_profile.get('current_lesson_data', {}).get('lessonTitle', 'N/A')
@@ -298,13 +339,17 @@ def handle_bot_logic(user_id, message_text):
             send_whatsapp_message(user_id, msg)
         
         users[user_id] = user_profile
-        if not user_profile: # If profile is now empty, remove user from dict
+        if not user_profile:
              if user_id in users: del users[user_id]
         save_json_file(users, user_file_path)
         return
 
     if 'mode' not in user_profile:
-        modes = {'1': 'lessons', '2': 'hymnbook', '3': 'bible', '4': 'camp_registration', '5': 'camp_registration'}
+        modes = {
+            '1': 'lessons', '2': 'hymnbook', '3': 'bible', 
+            '4': 'camp_registration', '5': 'camp_registration',
+            '6': 'check_status'
+        }
         if message_text_lower in modes:
             user_profile['mode'] = modes[message_text_lower]
             if message_text_lower == '4': user_profile['registration_type'] = 'youths'
@@ -313,7 +358,6 @@ def handle_bot_logic(user_id, message_text):
             send_whatsapp_message(user_id, main_menu_text)
             return
 
-    # --- Mode Handler: Lessons (Polished and functional) ---
     if user_profile.get('mode') == 'lessons':
         step = user_profile.get('lesson_step', 'start')
 
@@ -361,7 +405,7 @@ def handle_bot_logic(user_id, message_text):
                     user_profile['lesson_step'] = 'awaiting_lesson_action'
                 else:
                     send_whatsapp_message(user_id, "Sorry, I couldn't find the current lesson for your class.")
-                    if user_id in users: del users[user_id] # Reset state
+                    if user_id in users: del users[user_id]
         
         elif step == 'awaiting_lesson_action':
             if message_text_lower == '1':
@@ -383,7 +427,6 @@ def handle_bot_logic(user_id, message_text):
             
             send_whatsapp_message(user_id, "I hope that helps! You can ask another question, or type *m* to return to the lesson menu.")
 
-    # --- Other modes (Hymnbook, Bible, Camp Registration) are unchanged ---
     elif user_profile.get('mode') == 'hymnbook':
         step = user_profile.get('hymn_step', 'start')
         if step == 'start':
@@ -518,6 +561,7 @@ def handle_bot_logic(user_id, message_text):
         elif step == 'awaiting_confirmation':
             if message_text_lower == 'confirm':
                 send_whatsapp_message(user_id, "Thank you! Submitting your registration...")
+                # Ensure the column headers here match your Google Sheet exactly
                 row = [datetime.now().strftime("%Y-%m-%d %H:%M:%S"), data.get('first_name', ''), data.get('last_name', ''), data.get('dob', ''), data.get('age', ''), data.get('gender', ''), data.get('id_passport', ''), data.get('phone', ''), data.get('salvation_status', ''), data.get('dependents', ''), data.get('volunteer_status', ''), data.get('volunteer_department', ''), data.get('nok_name', ''), data.get('nok_phone', ''), f"{data.get('camp_start', '')} to {data.get('camp_end', '')}"]
                 sheet_to_use = YOUTH_CAMP_SHEET_NAME if reg_type == 'youths' else ANNUAL_CAMP_SHEET_NAME
                 success = append_to_google_sheet(row, sheet_to_use)
@@ -530,6 +574,49 @@ def handle_bot_logic(user_id, message_text):
                 handle_bot_logic(user_id, message_text) # Rerun from start
                 return
             else: send_whatsapp_message(user_id, "Please type *confirm* or *restart*.")
+    
+    elif user_profile.get('mode') == 'check_status':
+        step = user_profile.get('check_step', 'start')
+
+        if step == 'start':
+            send_whatsapp_message(user_id, "Which camp registration would you like to check?\n\n*1.* Youths Camp\n*2.* Annual Camp")
+            user_profile['check_step'] = 'awaiting_camp_choice'
+
+        elif step == 'awaiting_camp_choice':
+            if message_text_lower not in ['1', '2']:
+                send_whatsapp_message(user_id, "Invalid choice. Please enter *1* for Youths Camp or *2* for Annual Camp.")
+            else:
+                camp_type = 'youths' if message_text_lower == '1' else 'annual'
+                user_profile['camp_to_check'] = camp_type
+                send_whatsapp_message(user_id, "Got it. Please enter the *Phone Number* or *ID/Passport Number* you used to register.")
+                user_profile['check_step'] = 'awaiting_identifier'
+
+        elif step == 'awaiting_identifier':
+            identifier = message_text.strip()
+            sheet_name = YOUTH_CAMP_SHEET_NAME if user_profile.get('camp_to_check') == 'youths' else ANNUAL_CAMP_SHEET_NAME
+            
+            send_whatsapp_message(user_id, f"Checking for '{identifier}' in the {user_profile.get('camp_to_check').capitalize()} Camp list... 🕵️‍♀️")
+            
+            status = check_registration_status(identifier, sheet_name)
+            
+            if status == "Spreadsheet-Not-Found":
+                 send_whatsapp_message(user_id, f"Sorry, I couldn't find the registration sheet for that camp. Please contact an administrator.")
+            elif isinstance(status, dict):
+                # The keys here ('FirstName', 'LastName', etc.) MUST match your Google Sheet headers.
+                confirm_msg = (
+                    f"✅ *Registration Found!* ✅\n\n"
+                    f"Hi *{status.get('FirstName', '')} {status.get('LastName', '')}*!\n"
+                    f"Your registration for the *{sheet_name}* is confirmed.\n\n"
+                    f"*Phone:* {status.get('Phone', '')}\n"
+                    f"*ID/Passport:* {status.get('ID/Passport', '')}\n"
+                    f"*Camp Stay:* {status.get('CampStay', 'N/A')}"
+                )
+                send_whatsapp_message(user_id, confirm_msg)
+            else:
+                send_whatsapp_message(user_id, f"❌ *No Registration Found*\n\nI could not find a registration matching '{identifier}'. Please make sure the number is correct or proceed with registration from the main menu.")
+            
+            if user_id in users: del users[user_id]
+
 
     if json.dumps(user_profile) != original_profile_state:
         users[user_id] = user_profile
