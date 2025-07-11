@@ -3905,11 +3905,9 @@
         "Shamwari yedu ndiJesu,",
         "Wakafira isu vatadzi,",
         "Tinenguva yakanaka,",
-        "Kwaari tonyengetera"
-      ],
-      [
-        "Runyararo hatisina,",
-        "Towandirwa nezvirwadzi",
+        "Kwaari tonyengetera",
+       "Runyararo hatisina,",
+        "Towandirwa nezvirwadzo",
         "Ngatipfugameyi tose,",
         "Kwaari tonyengetera"
       ],
@@ -3917,10 +3915,8 @@
         "Muyedzi anotiyedza,",
         "Nhamo dzozunguza mwoyo,",
         "Hatifanire kuneta,",
-        "Isa zvose kuna Jesu"
-      ],
-      [
-        "Tingaiwanepi shamwari",
+        "Isa zvose kuna Jesu",
+      "Tingaiwanepi shamwari",
         "Ingatinzwire hurombo,",
         "Jesu anoziva zvose",
         "Isa zvose kuna Jesu"
@@ -3929,12 +3925,10 @@
         "Kana nhamo dzatikomba,",
         "Toremerwa panzira,",
         "Nhovo yedu ndiye Jesu,",
-        "Isa zvose kuna Jesu"
-      ],
-      [
+        "Isa zvose kuna Jesu",
         "Hama dzedu dzinoseka,",
         "Isa zvose kuna Jesu,",
-        "Ruwoko nvake rwakanaka,",
+        "Rwoko rwake rwakanaka,",
         "Uchawana rufaro"
       ]
     ],
@@ -3988,7 +3982,7 @@
       "Tariro yangu imire,",
       "PaRopa raJesu Ishe,",
       "Handichazovimba mumwe,",
-      "Ndosirnba nezita raShe"
+      "Ndovimba nezita raShe"
     ],
     [
       "Uso hwake hwapfidigwa,",
@@ -3999,7 +3993,7 @@
     [
       "Mhiko nevimbiso dzake,",
       "Zvinotsika mumurove,",
-      "Ndarcsikirwa nazvose,",
+      "Ndarasikirwa nazvose,",
       "Iye ndichavimba naye"
     ]
   ],
@@ -4042,26 +4036,23 @@
         "Ishe tigadzirire",
         "Nguva yokuteura;",
         "Tinopfugama mabvi",
-        "Ngatifunge kwauri;"
-      ],
-      [
-        "Uvenesu Mponisi,",
+        "Ngatifunge kwauri;",
+       "Uvenesu Mponisi,",
         "Tipe rufaro rwako"
       ],
       [
         "Toswedera kwauri,",
         "Tinzwise simba rako;",
         "Tinochema savana",
-        "Kuna Baba wavose,"
-      ],
-      [
-        "Tiri pamberi pako,",
+        "Kuna Baba wavose,",
+      "Tiri pamberi pako,",
         "Tine kutya kutsvene"
       ],
       [
         "Tinofunga M 'ponisi.",
         "Chitenderano chako:",
         "Wakati, Ndinotuma Mweya",
+        "Mweya Mutsvene wangu,",
         "Zarura mwoyo yedu",
         "Kuti timugamuchire"
       ]
@@ -4110,14 +4101,12 @@
     "title": "FAMBA MANGWANA NGWANA",
     "verses": [
       [
-        "Famba tuangwanangwana,",
+        "Famba mangwanangwana,",
         "Famba masikati",
         "Famba zuva radoka,",
-        "Famba pausiku;"
-      ],
-      [
+        "Famba pausiku;",
         "Famba nomwoyo mutsvene",
-        "Urege kutyisa.",
+        "Urege kutyiswa.",
         "Upfugame nemabvi,",
         "Teura kwaari"
       ],
@@ -4125,9 +4114,7 @@
         "Kumbirira shamwari,",
         "Vose unovada;",
         "Kumbirira vavengi",
-        "Rega kuvasiya;"
-      ],
-      [
+        "Rega kuvasiya;",
         "Shure kwezvo kumbira,",
         "Chaunotsvaka woga",
         "Nero Zita raJesu",
@@ -4137,9 +4124,7 @@
         "Kana washaya nzvimbo,",
         "Yokugara woga,",
         "Kana varipo vamwe,",
-        "Zvimwe une basa,"
-      ],
-      [
+        "Zvimwe une basa,",
         "Simudza mwoyo wako,",
         "Mwari anokunzwa,",
         "Kufunga kwedu kose",
@@ -4151,7 +4136,9 @@
         "Naparufaro nvako",
         "Tenda kuna Mwari;",
         "Simba raakatipa,",
-        "Rinokunda zvose"
+        "Rinokunda zvose",
+        "Simba rokuteura",
+        "Kuna Mwari Wedu"
       ]
     ],
     "chorus": []
