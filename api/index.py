@@ -51,7 +51,7 @@ YOUTH_CAMP_SHEET_NAME = os.environ.get('YOUTH_CAMP_SHEET_NAME', 'Youths Camp Reg
 
 # --- NEW: ADMIN CONFIGURATION ---
 # IMPORTANT: Add your WhatsApp number(s) here in international format
-ADMIN_NUMBERS = ['+263718704505' , '+263778097337'] 
+ADMIN_NUMBERS = ['+263718704505'] 
 
 ANCHOR_DATE = date(2024, 8, 21)
 PRIMARY_PALS_ANCHOR_DATE = date(2024, 9, 1)
