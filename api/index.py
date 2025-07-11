@@ -284,7 +284,7 @@ def send_whatsapp_message(recipient_id, message_payload):
         print("ERROR: WhatsApp credentials not set.")
         return
     
-    url = f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/messages"
+    url = f"https://graph.facebook.com/v23.0/{PHONE_NUMBER_ID}/messages"
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
     
     # The payload is now constructed before calling this function
