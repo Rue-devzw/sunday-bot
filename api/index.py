@@ -130,7 +130,6 @@ def export_registrations_to_sheet(camp_type):
         print(f"Error during export: {e}")
         return f"⚠️ An error occurred during the export process: {e}"
 
-# ... (Other helper functions like calculate_age, get_verse_from_db, etc. remain unchanged) ...
 def calculate_age(dob_string):
     try:
         birth_date = datetime.strptime(dob_string, "%d/%m/%Y").date()
@@ -200,7 +199,6 @@ def format_hymn(hymn):
                 message += f"*{i}.*\n" + "\n".join(v_lines) + "\n\n"
     return message.strip()
 def format_lesson(lesson, lesson_class):
-    # Unchanged
     if not lesson: return "Lesson details could not be found."
     message_parts = []
     if lesson_class == "Search":
@@ -255,7 +253,6 @@ def format_lesson(lesson, lesson_class):
         message_parts.append(f"📖 *{title}*\n\n📌 *Memory Verse:*\n_{memory_verse}_\n\n📝 *Lesson Text:*\n{main_text}")
     return "\n\n".join(message_parts)
 def get_ai_response(question, context):
-    # Unchanged
     if not gemini_model: return "Sorry, the AI thinking module is currently unavailable."
     prompt = (
         "You are a friendly and helpful Sunday School assistant. "
@@ -277,17 +274,13 @@ def get_ai_response(question, context):
 
 # --- 4. WHATSAPP MESSAGING FUNCTIONS ---
 def send_whatsapp_message(recipient_id, message_payload):
-    """
-    Sends a message to a WhatsApp user. The payload determines the message type.
-    """
     if not all([WHATSAPP_TOKEN, PHONE_NUMBER_ID]):
         print("ERROR: WhatsApp credentials not set.")
         return
     
-    url = f"https://graph.facebook.com/v23.0/{PHONE_NUMBER_ID}/messages"
+    url = f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/messages"
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
     
-    # The payload is now constructed before calling this function
     data = {
         "messaging_product": "whatsapp",
         "to": recipient_id,
@@ -338,10 +331,10 @@ def handle_bot_logic(user_id, message_text):
 
     if message_text_lower == 'reset_session':
         session_ref.delete()
-        # Fall-through to show main menu
         user_profile = {}
     
     if not user_profile:
+        # --- FIX: Shortened titles to be under 24 characters ---
         interactive = {
             "type": "list",
             "header": {"type": "text", "text": "Welcome to SundayBot 🙏"},
@@ -356,8 +349,8 @@ def handle_bot_logic(user_id, message_text):
                             {"id": "mode_lessons", "title": "📖 Weekly Lessons"},
                             {"id": "mode_hymnbook", "title": "🎶 Hymnbook"},
                             {"id": "mode_bible", "title": "✝️ Bible Lookup"},
-                            {"id": "mode_camp_reg_youths", "title": "🏕️ Youths Camp Registration"},
-                            {"id": "mode_camp_reg_annual", "title": "🏕️ Annual Camp Registration"},
+                            {"id": "mode_camp_reg_youths", "title": "🏕️ Youths Camp Reg."},
+                            {"id": "mode_camp_reg_annual", "title": "🏕️ Annual Camp Reg."},
                             {"id": "mode_check_status", "title": "✅ Check Registration"}
                         ]
                     }
@@ -367,15 +360,13 @@ def handle_bot_logic(user_id, message_text):
         send_interactive_message(user_id, interactive)
         return
 
-    # --- Mode Selection from Main Menu ---
     if message_text_lower.startswith("mode_"):
         mode = message_text_lower.split('_')[1]
         user_profile['mode'] = mode
         if mode == 'camp_reg':
             user_profile['registration_type'] = message_text_lower.split('_')[2]
-            user_profile['mode'] = 'camp_registration' # Standardize mode name
+            user_profile['mode'] = 'camp_registration'
     
-    # --- Module Logic ---
     mode = user_profile.get('mode')
 
     if mode == 'lessons':
@@ -394,9 +385,8 @@ def handle_bot_logic(user_id, message_text):
             user_class = CLASSES[class_key]
             user_profile['lesson_class'] = user_class
             
-            # ... (Lesson fetching logic is the same)
             lesson_files = { "Beginners": "beginners_lessons.json", "Primary Pals": "primary_pals_lessons.json", "Answer": "answer_lessons.json", "Search": "search_lessons.json" }
-            lesson_file_path = os.path.join(os.path.dirname(__file__), LESSONS_DIR, lesson_files.get(user_class))
+            lesson_file_path = os.path.join(os.path.dirname(__file__), LESSONS_DIR, lesson_files.get(user_class, ''))
             raw_data = load_json_file(lesson_file_path)
             if user_class == "Primary Pals" and isinstance(raw_data, dict): all_lessons = raw_data.get('primary_pals_lessons', [])
             elif isinstance(raw_data, list): all_lessons = raw_data
@@ -422,19 +412,21 @@ def handle_bot_logic(user_id, message_text):
             if message_text_lower == 'lesson_read':
                 formatted_lesson = format_lesson(user_profile.get('current_lesson_data'), user_profile.get('lesson_class'))
                 send_text_message(user_id, formatted_lesson)
-                # Re-send the options
                 interactive = { "type": "button", "body": {"text": "What next?"}, "action": {"buttons": [{"type": "reply", "reply": {"id": "lesson_read", "title": "📖 Read Again"}}, {"type": "reply", "reply": {"id": "lesson_ask", "title": "❓ Ask a Question"}}, {"type": "reply", "reply": {"id": "reset_session", "title": "⬅️ Main Menu"}}]} }
                 send_interactive_message(user_id, interactive)
             elif message_text_lower == 'lesson_ask':
-                send_text_message(user_id, "OK, please type your question about the lesson. To return to the main menu, send 'reset'.")
+                send_text_message(user_id, "OK, please type your question about the lesson. To return to the main menu, send 'reset_session'.")
                 user_profile['lesson_step'] = 'awaiting_ai_question'
 
         elif step == 'awaiting_ai_question':
-            context = format_lesson(user_profile.get('current_lesson_data'), user_profile.get('lesson_class'))
-            send_text_message(user_id, "_Thinking..._ 🤔")
-            ai_answer = get_ai_response(message_text, context)
-            send_text_message(user_id, ai_answer)
-            send_text_message(user_id, "You can ask another question, or send 'reset' to return to the main menu.")
+            if message_text_lower not in ['lesson_read', 'lesson_ask']:
+                context = format_lesson(user_profile.get('current_lesson_data'), user_profile.get('lesson_class'))
+                send_text_message(user_id, "_Thinking..._ 🤔")
+                ai_answer = get_ai_response(message_text, context)
+                send_text_message(user_id, ai_answer)
+                send_text_message(user_id, "You can ask another question, or go back to the main menu by tapping the button below.")
+                interactive = { "type": "button", "body": {"text": "Finished asking questions?"}, "action": {"buttons": [{"type": "reply", "reply": {"id": "reset_session", "title": "⬅️ Main Menu"}}]} }
+                send_interactive_message(user_id, interactive)
 
     elif mode == 'camp_registration':
         step = user_profile.get('registration_step', 'start')
@@ -464,7 +456,7 @@ def handle_bot_logic(user_id, message_text):
                 send_text_message(user_id, "I'm having trouble checking for duplicates right now. Please contact an admin.")
                 session_ref.delete()
                 return
-            else: # Not a duplicate
+            else: 
                 data['id_passport'] = id_passport
                 send_text_message(user_id, "Great, you are not already registered. Now, what is your *first name*?")
                 user_profile['registration_step'] = 'awaiting_first_name'
@@ -479,7 +471,6 @@ def handle_bot_logic(user_id, message_text):
             send_text_message(user_id, "Got it. What is your *date of birth*? (DD/MM/YYYY)")
             user_profile['registration_step'] = 'awaiting_dob'
         
-        # ... (rest of registration flow is text-based and remains the same)
         elif step == 'awaiting_dob':
             age = calculate_age(message_text.strip())
             if not age: send_text_message(user_id, "That doesn't look right. Please use DD/MM/YYYY format.")
@@ -562,7 +553,6 @@ def handle_bot_logic(user_id, message_text):
             elif message_text_lower == 'restart_reg':
                 user_profile['registration_step'] = 'start'
                 user_profile['registration_data'] = {}
-                # Re-run the logic to start over
                 handle_bot_logic(user_id, "restart_internal")
                 return
 
@@ -602,12 +592,9 @@ def handle_bot_logic(user_id, message_text):
             session_ref.delete()
             return
     
-    # ... (Add other modes like hymnbook and bible here in the same pattern)
-    
     session_ref.set(user_profile)
 
 def _send_confirmation_message(user_id, data, camp_name):
-    # This function is used to show the user their data before confirming
     conf_text = (
         f"📝 *Please confirm your details for the {camp_name}:*\n\n"
         f"*Name:* {data.get('first_name', '')} {data.get('last_name', '')}\n"
@@ -645,7 +632,6 @@ def whatsapp_webhook():
                                 user_id = message['from']
                                 msg_text = ''
                                 
-                                # --- UPGRADED: Handle both text and interactive messages ---
                                 if message.get('type') == 'text':
                                     msg_text = message['text']['body']
                                 elif message.get('type') == 'interactive':
