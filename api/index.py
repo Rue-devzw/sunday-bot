@@ -306,7 +306,7 @@ def send_interactive_message(recipient_id, interactive_payload):
     payload = {"type": "interactive", "interactive": interactive_payload}
     send_whatsapp_message(recipient_id, payload)
 
-# --- 5. MAIN BOT LOGIC HANDLER ---
+# --- 5. MAIN BOT LOGIC HANDLER (RE-ENGINEERED) ---
 def handle_bot_logic(user_id, message_text):
     if not db:
         send_text_message(user_id, "Sorry, the bot is experiencing technical difficulties (Database connection failed). Please try again later.")
@@ -318,9 +318,9 @@ def handle_bot_logic(user_id, message_text):
     
     message_text_lower = message_text.lower().strip()
 
+    # --- Admin Check ---
     clean_user_id = re.sub(r'\D', '', user_id)
     clean_admin_numbers = [re.sub(r'\D', '', num) for num in ADMIN_NUMBERS]
-
     if clean_user_id in clean_admin_numbers and message_text_lower.startswith('export'):
         parts = message_text_lower.split()
         if len(parts) == 2 and parts[1] in ['youths', 'annual']:
@@ -333,25 +333,23 @@ def handle_bot_logic(user_id, message_text):
             send_text_message(user_id, "Invalid export command. Use `export youths` or `export annual`.")
             return
 
+    # --- Session Reset ---
     if message_text_lower == 'reset_session':
         session_ref.delete()
         user_profile = {}
 
+    # --- Mode Selection Logic ---
     if message_text_lower.startswith("mode_"):
         mode_parts = message_text_lower.split('_')
         mode = mode_parts[1]
-        user_profile['mode'] = mode
+        user_profile = {'mode': mode} # Reset profile with the new mode
         if mode == 'camp_reg':
             user_profile['registration_type'] = mode_parts[2]
             user_profile['mode'] = 'camp_registration'
-        
-        # Clear step data for the new mode
-        for key in list(user_profile.keys()):
-            if key.endswith('_step') or key.endswith('_data'):
-                del user_profile[key]
-
+    
     mode = user_profile.get('mode')
 
+    # --- Main Menu Display ---
     if not mode:
         interactive = {
             "type": "list",
@@ -376,10 +374,10 @@ def handle_bot_logic(user_id, message_text):
             }
         }
         send_interactive_message(user_id, interactive)
-        session_ref.set(user_profile) # Save empty profile to avoid re-triggering
+        session_ref.set(user_profile)
         return
 
-    # --- Module Logic ---
+    # --- Module Execution ---
     if mode == 'lessons':
         step = user_profile.get('lesson_step', 'start')
         if step == 'start':
@@ -392,7 +390,8 @@ def handle_bot_logic(user_id, message_text):
             user_profile['lesson_step'] = 'awaiting_class_choice'
         
         elif step == 'awaiting_class_choice' and message_text_lower.startswith('lesson_class_'):
-            class_key = message_text_lower.split('_')[-1]
+            # --- FIX: Robust key extraction ---
+            class_key = message_text_lower.replace('lesson_class_', '', 1)
             user_class = CLASSES.get(class_key)
             if not user_class:
                 send_text_message(user_id, "Invalid class selection. Please try again.")
@@ -456,7 +455,7 @@ def handle_bot_logic(user_id, message_text):
             user_profile['hymn_step'] = 'awaiting_hymnbook_choice'
 
         elif step == 'awaiting_hymnbook_choice' and message_text_lower.startswith('hymnbook_'):
-            hymnbook_key = message_text_lower.split('_')[-1]
+            hymnbook_key = message_text_lower.replace('hymnbook_', '', 1)
             chosen_book = HYMNBOOKS.get(hymnbook_key)
             if not chosen_book:
                 send_text_message(user_id, "Invalid hymnbook selection. Please try again.")
@@ -491,7 +490,7 @@ def handle_bot_logic(user_id, message_text):
             user_profile['bible_step'] = 'awaiting_bible_choice'
         
         elif step == 'awaiting_bible_choice' and message_text_lower.startswith('bible_'):
-            bible_key = message_text_lower.split('_')[-1]
+            bible_key = message_text_lower.replace('bible_', '', 1)
             chosen_bible = BIBLES.get(bible_key)
             if not chosen_bible:
                 send_text_message(user_id, "Invalid Bible selection. Please try again.")
@@ -617,7 +616,7 @@ def handle_bot_logic(user_id, message_text):
                     _send_confirmation_message(user_id, data, "Camp")
                     user_profile['registration_step'] = 'awaiting_confirmation'
         elif step == 'awaiting_volunteer_department' and message_text_lower.startswith('dept_'):
-            dept_key = message_text_lower.split('_')[-1]
+            dept_key = message_text_lower.replace('dept_', '', 1)
             data['volunteer_department'] = DEPARTMENTS[dept_key]
             _send_confirmation_message(user_id, data, "Camp")
             user_profile['registration_step'] = 'awaiting_confirmation'
@@ -645,7 +644,7 @@ def handle_bot_logic(user_id, message_text):
             user_profile['check_step'] = 'awaiting_camp_choice'
         
         elif step == 'awaiting_camp_choice' and message_text_lower.startswith('check_'):
-            camp_type = message_text_lower.split('_')[-1]
+            camp_type = message_text_lower.replace('check_', '', 1)
             user_profile['camp_to_check'] = camp_type
             send_text_message(user_id, "Got it. Please enter the *ID/Passport Number* you used to register.")
             user_profile['check_step'] = 'awaiting_identifier'
