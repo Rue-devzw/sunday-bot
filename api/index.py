@@ -329,21 +329,17 @@ def handle_bot_logic(user_id, message_text):
             send_text_message(user_id, "Invalid export command. Use `export youths` or `export annual`.")
             return
 
-    # --- FIX: Re-ordered logic to process input before checking for an empty profile ---
-    
-    # 1. Handle session reset first
     if message_text_lower == 'reset_session':
         session_ref.delete()
         user_profile = {}
 
-    # 2. Process incoming selections that define or change the mode
     if message_text_lower.startswith("mode_"):
         mode = message_text_lower.split('_')[1]
         user_profile['mode'] = mode
         if mode == 'camp_reg':
             user_profile['registration_type'] = message_text_lower.split('_')[2]
             user_profile['mode'] = 'camp_registration'
-        # Clear old step data to prevent conflicts between modes
+        
         keys_to_clear = [k for k in user_profile if k.endswith('_step') or k.endswith('_data')]
         for key in keys_to_clear:
             if key in user_profile:
@@ -351,7 +347,6 @@ def handle_bot_logic(user_id, message_text):
 
     mode = user_profile.get('mode')
 
-    # 3. If there's no mode, show the main menu
     if not mode:
         interactive = {
             "type": "list",
@@ -378,7 +373,6 @@ def handle_bot_logic(user_id, message_text):
         send_interactive_message(user_id, interactive)
         return
 
-    # 4. Execute logic for the current mode
     if mode == 'lessons':
         step = user_profile.get('lesson_step', 'start')
         if step == 'start':
@@ -392,7 +386,12 @@ def handle_bot_logic(user_id, message_text):
         
         elif step == 'awaiting_class_choice' and message_text_lower.startswith('lesson_class_'):
             class_key = message_text_lower.split('_')[-1]
-            user_class = CLASSES[class_key]
+            user_class = CLASSES.get(class_key)
+            if not user_class:
+                send_text_message(user_id, "Invalid class selection. Please try again.")
+                session_ref.delete()
+                return
+
             user_profile['lesson_class'] = user_class
             
             lesson_files = { "Beginners": "beginners_lessons.json", "Primary Pals": "primary_pals_lessons.json", "Answer": "answer_lessons.json", "Search": "search_lessons.json" }
@@ -437,6 +436,73 @@ def handle_bot_logic(user_id, message_text):
                 send_text_message(user_id, "You can ask another question, or go back to the main menu by tapping the button below.")
                 interactive = { "type": "button", "body": {"text": "Finished asking questions?"}, "action": {"buttons": [{"type": "reply", "reply": {"id": "reset_session", "title": "⬅️ Main Menu"}}]} }
                 send_interactive_message(user_id, interactive)
+    
+    # --- FIX: Added logic for hymnbook mode ---
+    elif mode == 'hymnbook':
+        step = user_profile.get('hymn_step', 'start')
+        if step == 'start':
+            interactive = {
+                "type": "list", "header": {"type": "text", "text": "Select Hymnbook"},
+                "body": {"text": "Please choose a hymnbook from the list."},
+                "action": { "button": "View Hymnbooks", "sections": [{"title": "Hymnbooks", "rows": [{"id": f"hymnbook_{key}", "title": book['name']} for key, book in HYMNBOOKS.items()]}]}
+            }
+            send_interactive_message(user_id, interactive)
+            user_profile['hymn_step'] = 'awaiting_hymnbook_choice'
+
+        elif step == 'awaiting_hymnbook_choice' and message_text_lower.startswith('hymnbook_'):
+            hymnbook_key = message_text_lower.split('_')[-1]
+            chosen_book = HYMNBOOKS.get(hymnbook_key)
+            if not chosen_book:
+                send_text_message(user_id, "Invalid hymnbook selection. Please try again.")
+                session_ref.delete()
+                return
+            
+            user_profile['hymnbook_file'] = chosen_book['file']
+            send_text_message(user_id, f"You've selected *{chosen_book['name']}*. Please enter a hymn number.")
+            user_profile['hymn_step'] = 'awaiting_hymn_number'
+        
+        elif step == 'awaiting_hymn_number':
+            if not message_text.strip().isdigit():
+                send_text_message(user_id, "Please enter a valid number.")
+            else:
+                hymn_file_path = os.path.join(os.path.dirname(__file__), HYMNBOOKS_DIR, user_profile['hymnbook_file'])
+                all_hymns = load_json_file(hymn_file_path)
+                found_hymn = next((h for h in all_hymns if str(h.get('number')) == message_text.strip()), None)
+                send_text_message(user_id, format_hymn(found_hymn))
+                send_text_message(user_id, "You can enter another hymn number or return to the main menu.")
+                interactive = { "type": "button", "body": {"text": "Finished with hymns?"}, "action": {"buttons": [{"type": "reply", "reply": {"id": "reset_session", "title": "⬅️ Main Menu"}}]} }
+                send_interactive_message(user_id, interactive)
+
+    # --- FIX: Added logic for bible mode ---
+    elif mode == 'bible':
+        step = user_profile.get('bible_step', 'start')
+        if step == 'start':
+            interactive = {
+                "type": "list", "header": {"type": "text", "text": "Select Bible Version"},
+                "body": {"text": "Please choose a Bible version from the list."},
+                "action": { "button": "View Versions", "sections": [{"title": "Bibles", "rows": [{"id": f"bible_{key}", "title": bible['name']} for key, bible in BIBLES.items()]}]}
+            }
+            send_interactive_message(user_id, interactive)
+            user_profile['bible_step'] = 'awaiting_bible_choice'
+        
+        elif step == 'awaiting_bible_choice' and message_text_lower.startswith('bible_'):
+            bible_key = message_text_lower.split('_')[-1]
+            chosen_bible = BIBLES.get(bible_key)
+            if not chosen_bible:
+                send_text_message(user_id, "Invalid Bible selection. Please try again.")
+                session_ref.delete()
+                return
+
+            user_profile['bible_file'] = chosen_bible['file']
+            send_text_message(user_id, f"You've selected the *{chosen_bible['name']}*. Please enter a passage (e.g., John 3:16).")
+            user_profile['bible_step'] = 'awaiting_passage'
+
+        elif step == 'awaiting_passage':
+            verse_text = get_verse_from_db(message_text.strip(), user_profile['bible_file'])
+            send_text_message(user_id, verse_text)
+            send_text_message(user_id, "You can enter another passage or return to the main menu.")
+            interactive = { "type": "button", "body": {"text": "Finished looking up verses?"}, "action": {"buttons": [{"type": "reply", "reply": {"id": "reset_session", "title": "⬅️ Main Menu"}}]} }
+            send_interactive_message(user_id, interactive)
 
     elif mode == 'camp_registration':
         step = user_profile.get('registration_step', 'start')
@@ -602,7 +668,6 @@ def handle_bot_logic(user_id, message_text):
             session_ref.delete()
             return
     
-    # 5. Save the final state to Firestore
     session_ref.set(user_profile)
 
 def _send_confirmation_message(user_id, data, camp_name):
