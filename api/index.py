@@ -63,7 +63,8 @@ LESSONS_FILE_BEGINNERS = 'beginners_lessons.json'
 LESSONS_FILE_PRIMARY_PALS = 'primary_pals_lessons.json'
 
 CLASSES = { "beginners": "Beginners", "primary_pals": "Primary Pals", "answer": "Answer", "search": "Search" }
-HYMNBOOKS = { "shona": {"name": "Yellow Hymnbook Shona", "file": "shona_hymns.json"}, "english": {"name": "Sing Praises Unto Our King", "file": "english_hymns.json"} }
+# --- FIX: Shortened hymnbook title to be under 24 characters ---
+HYMNBOOKS = { "shona": {"name": "Yellow Hymnbook Shona", "file": "shona_hymns.json"}, "english": {"name": "English Hymns", "file": "english_hymns.json"} }
 BIBLES = { "shona": {"name": "Shona Bible", "file": "shona_bible.db"}, "english": {"name": "English Bible (KJV)", "file": "english_bible.db"} }
 DEPARTMENTS = { "security": "Security", "media": "Media", "accommodation": "Accommodation", "transport": "Transport", "translation": "Translation", "kitchen": "Kitchen Work", "editorial": "Notes Taking (Editorial)"}
 
@@ -292,7 +293,12 @@ def send_whatsapp_message(recipient_id, message_payload):
         response.raise_for_status()
         print(f"Message sent to {recipient_id}: {response.status_code}, {response.text}")
     except requests.exceptions.RequestException as e:
+        # --- FIX: Added detailed error logging ---
         print(f"Error sending message: {e}")
+        if e.response:
+            print(f"Response Body: {e.response.text}")
+            print(f"Request Payload: {json.dumps(data, indent=2)}")
+
 
 def send_text_message(recipient_id, text):
     payload = {"type": "text", "text": {"body": text}}
@@ -437,7 +443,6 @@ def handle_bot_logic(user_id, message_text):
                 interactive = { "type": "button", "body": {"text": "Finished asking questions?"}, "action": {"buttons": [{"type": "reply", "reply": {"id": "reset_session", "title": "⬅️ Main Menu"}}]} }
                 send_interactive_message(user_id, interactive)
     
-    # --- FIX: Added logic for hymnbook mode ---
     elif mode == 'hymnbook':
         step = user_profile.get('hymn_step', 'start')
         if step == 'start':
@@ -473,7 +478,6 @@ def handle_bot_logic(user_id, message_text):
                 interactive = { "type": "button", "body": {"text": "Finished with hymns?"}, "action": {"buttons": [{"type": "reply", "reply": {"id": "reset_session", "title": "⬅️ Main Menu"}}]} }
                 send_interactive_message(user_id, interactive)
 
-    # --- FIX: Added logic for bible mode ---
     elif mode == 'bible':
         step = user_profile.get('bible_step', 'start')
         if step == 'start':
