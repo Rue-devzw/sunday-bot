@@ -63,7 +63,6 @@ LESSONS_FILE_BEGINNERS = 'beginners_lessons.json'
 LESSONS_FILE_PRIMARY_PALS = 'primary_pals_lessons.json'
 
 CLASSES = { "beginners": "Beginners", "primary_pals": "Primary Pals", "answer": "Answer", "search": "Search" }
-# --- FIX: Shortened hymnbook title to be under 24 characters ---
 HYMNBOOKS = { "shona": {"name": "Yellow Hymnbook Shona", "file": "shona_hymns.json"}, "english": {"name": "English Hymns", "file": "english_hymns.json"} }
 BIBLES = { "shona": {"name": "Shona Bible", "file": "shona_bible.db"}, "english": {"name": "English Bible (KJV)", "file": "english_bible.db"} }
 DEPARTMENTS = { "security": "Security", "media": "Media", "accommodation": "Accommodation", "transport": "Transport", "translation": "Translation", "kitchen": "Kitchen Work", "editorial": "Notes Taking (Editorial)"}
@@ -293,7 +292,6 @@ def send_whatsapp_message(recipient_id, message_payload):
         response.raise_for_status()
         print(f"Message sent to {recipient_id}: {response.status_code}, {response.text}")
     except requests.exceptions.RequestException as e:
-        # --- FIX: Added detailed error logging ---
         print(f"Error sending message: {e}")
         if e.response:
             print(f"Response Body: {e.response.text}")
@@ -340,15 +338,16 @@ def handle_bot_logic(user_id, message_text):
         user_profile = {}
 
     if message_text_lower.startswith("mode_"):
-        mode = message_text_lower.split('_')[1]
+        mode_parts = message_text_lower.split('_')
+        mode = mode_parts[1]
         user_profile['mode'] = mode
         if mode == 'camp_reg':
-            user_profile['registration_type'] = message_text_lower.split('_')[2]
+            user_profile['registration_type'] = mode_parts[2]
             user_profile['mode'] = 'camp_registration'
         
-        keys_to_clear = [k for k in user_profile if k.endswith('_step') or k.endswith('_data')]
-        for key in keys_to_clear:
-            if key in user_profile:
+        # Clear step data for the new mode
+        for key in list(user_profile.keys()):
+            if key.endswith('_step') or key.endswith('_data'):
                 del user_profile[key]
 
     mode = user_profile.get('mode')
@@ -377,8 +376,10 @@ def handle_bot_logic(user_id, message_text):
             }
         }
         send_interactive_message(user_id, interactive)
+        session_ref.set(user_profile) # Save empty profile to avoid re-triggering
         return
 
+    # --- Module Logic ---
     if mode == 'lessons':
         step = user_profile.get('lesson_step', 'start')
         if step == 'start':
