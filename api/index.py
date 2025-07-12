@@ -340,13 +340,18 @@ def handle_bot_logic(user_id, message_text):
 
     # --- Mode Selection Logic ---
     if message_text_lower.startswith("mode_"):
-        mode_parts = message_text_lower.split('_')
-        mode = mode_parts[1]
-        user_profile = {'mode': mode} # Reset profile with the new mode
-        if mode == 'camp_reg':
-            user_profile['registration_type'] = mode_parts[2]
+        # --- FIX: Robustly parse the mode ID ---
+        # "mode_camp_reg_youths" -> "camp_reg_youths"
+        full_mode_id = message_text_lower.replace('mode_', '', 1)
+        
+        user_profile = {} # Start with a clean profile for the new mode
+
+        if full_mode_id.startswith('camp_reg_'):
             user_profile['mode'] = 'camp_registration'
-    
+            user_profile['registration_type'] = full_mode_id.replace('camp_reg_', '', 1)
+        else:
+            user_profile['mode'] = full_mode_id
+
     mode = user_profile.get('mode')
 
     # --- Main Menu Display ---
@@ -374,7 +379,7 @@ def handle_bot_logic(user_id, message_text):
             }
         }
         send_interactive_message(user_id, interactive)
-        session_ref.set(user_profile)
+        session_ref.set(user_profile) # Save empty profile to avoid re-triggering
         return
 
     # --- Module Execution ---
@@ -390,7 +395,6 @@ def handle_bot_logic(user_id, message_text):
             user_profile['lesson_step'] = 'awaiting_class_choice'
         
         elif step == 'awaiting_class_choice' and message_text_lower.startswith('lesson_class_'):
-            # --- FIX: Robust key extraction ---
             class_key = message_text_lower.replace('lesson_class_', '', 1)
             user_class = CLASSES.get(class_key)
             if not user_class:
