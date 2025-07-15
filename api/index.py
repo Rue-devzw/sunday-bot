@@ -11,6 +11,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import firebase_admin
 from firebase_admin import credentials, firestore
+import { SpeedInsights } from "@vercel/speed-insights/next"
 
 # --- 1. INITIALIZE FLASK & API CLIENTS ---
 app = Flask(__name__)
