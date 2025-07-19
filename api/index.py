@@ -136,6 +136,7 @@ def calculate_age(dob_string):
         today = date.today()
         return today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
     except ValueError: return None
+
 def get_verse_from_db(passage, db_filename):
     db_path = os.path.join(os.path.dirname(__file__), BIBLES_DIR, db_filename)
     if not os.path.exists(db_path): return f"Sorry, the selected Bible database file ({db_filename}) is missing."
@@ -167,12 +168,14 @@ def get_verse_from_db(passage, db_filename):
     except Exception as e:
         print(f"SQLite Database Error: {e}")
         return "Sorry, I'm having trouble looking up the Bible verse right now."
+
 def load_json_file(file_path):
     try:
         with open(file_path, 'r', encoding='utf-8') as f: return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as e:
         print(f"DEBUG: Error loading static JSON file '{file_path}': {e}")
         return []
+
 def get_current_lesson_index(user_class):
     today = date.today()
     anchor = PRIMARY_PALS_ANCHOR_DATE if user_class == "Primary Pals" else ANCHOR_DATE
@@ -180,6 +183,7 @@ def get_current_lesson_index(user_class):
     current_week_start = today + relativedelta(weekday=MO(-1))
     week_diff = (current_week_start - anchor_week_start).days // 7
     return week_diff if week_diff >= 0 else -1
+
 def format_hymn(hymn):
     if not hymn: return "Sorry, I couldn't find a hymn with that number."
     title, hymn_number = hymn.get('title', 'No Title'), hymn.get('number', '#')
@@ -198,60 +202,104 @@ def format_hymn(hymn):
             for i, v_lines in enumerate(part.get('verses', []), 1):
                 message += f"*{i}.*\n" + "\n".join(v_lines) + "\n\n"
     return message.strip()
+
 def format_lesson(lesson, lesson_class):
     if not lesson: return "Lesson details could not be found."
     message_parts = []
+    
     if lesson_class == "Search":
         title = lesson.get('lessonTitle', 'No Title')
         message_parts.append(f"📖 *{title}*")
         refs = lesson.get('bibleReference', [])
         if refs:
             ref_texts = [f"{r.get('book')} {r.get('chapter')}:{r.get('verses')}" for r in refs]
-            message_parts.append(f"✝️ *Bible Reference:* {', '.join(ref_texts)}")
-        if lesson.get('supplementalScripture'): message_parts.append(f"*Supplemental Scripture:* {lesson['supplementalScripture']}")
-        if lesson.get('keyVerse'): message_parts.append(f"📌 *Key Verse:*\n_{lesson['keyVerse']}_")
-        if lesson.get('resourceMaterial'): message_parts.append(f"📚 *Resource Material:*\n{lesson['resourceMaterial']}")
+            message_parts.append(f"✝️ *Bible Reference:* {linkify_bible_verses(', '.join(ref_texts))}")
+        
+        if lesson.get('supplementalScripture'):
+            message_parts.append(f"*Supplemental Scripture:* {linkify_bible_verses(lesson['supplementalScripture'])}")
+        
+        if lesson.get('keyVerse'):
+            message_parts.append(f"📌 *Key Verse:*\n_{linkify_bible_verses(lesson['keyVerse'])}_")
+            
+        if lesson.get('resourceMaterial'):
+            message_parts.append(f"📚 *Resource Material:*\n{linkify_bible_verses(lesson['resourceMaterial'])}")
+            
         message_parts.append("---")
         for section in lesson.get('lessonSections', []):
             sec_title = section.get('sectionTitle', '')
-            sec_content = section.get('sectionContent', '')
+            sec_content = linkify_bible_verses(section.get('sectionContent', ''))
             if section.get('sectionType') == 'text': message_parts.append(f"📝 *{sec_title}*\n{sec_content}")
             elif section.get('sectionType') == 'question':
                 q_num = section.get('questionNumber', '')
                 message_parts.append(f"❓ *Question {q_num}:*\n{sec_content}")
+
     elif lesson_class == "Primary Pals":
         title = lesson.get('title', 'No Title')
         message_parts.append(f"🎨 *{title}*")
         parent_guide = lesson.get('parent_guide', {})
-        memory_verse = parent_guide.get('memory_verse', {}).get('text', '')
+        memory_verse = linkify_bible_verses(parent_guide.get('memory_verse', {}).get('text', ''))
         if memory_verse: message_parts.append(f"📌 *Memory Verse:*\n_{memory_verse}_")
         message_parts.append("---")
         story = lesson.get('story', [])
-        if story: message_parts.append("📖 *Story*\n" + "\n\n".join(story))
+        if story: message_parts.append("📖 *Story*\n" + "\n\n".join([linkify_bible_verses(s) for s in story]))
+        
         activities = lesson.get('activities', [])
         if activities:
             activity_texts = ["🧩 *Activities*"]
             for act in activities:
                 act_title = act.get('title', '')
                 act_instr = "\n".join(act.get('instructions', [])) if isinstance(act.get('instructions'), list) else act.get('instructions', '')
-                activity_texts.append(f"*{act.get('type')}: {act_title}*\n{act_instr}")
+                activity_texts.append(f"*{act.get('type')}: {act_title}*\n{linkify_bible_verses(act_instr)}")
             message_parts.append("\n".join(activity_texts))
+        
         if parent_guide:
             guide_texts = ["👨‍👩‍👧 *Parent's Guide*"]
-            corner = parent_guide.get('parents_corner', {}).get('text', '')
+            corner = linkify_bible_verses(parent_guide.get('parents_corner', {}).get('text', ''))
             if corner: guide_texts.append(f"*Parent's Corner:*\n{corner}")
+            
             devotions = parent_guide.get('family_devotions', {}).get('verses', [])
             if devotions:
                 devotion_lines = ["*Family Devotions:*"]
-                for dev in devotions: devotion_lines.append(f"  - *{dev.get('day')}:* {dev.get('reference')}")
+                for dev in devotions: devotion_lines.append(f"  - *{dev.get('day')}:* {linkify_bible_verses(dev.get('reference'))}")
                 guide_texts.append("\n".join(devotion_lines))
             message_parts.append("\n".join(guide_texts))
-    else:
+            
+    else: # For Beginners and Answer classes
         title = lesson.get('title', 'No Title')
-        memory_verse = lesson.get('memory_verse', 'N/A')
-        main_text = "\n".join(lesson.get('text', []))
+        memory_verse = linkify_bible_verses(lesson.get('memory_verse', 'N/A'))
+        main_text = "\n".join([linkify_bible_verses(t) for t in lesson.get('text', [])])
         message_parts.append(f"📖 *{title}*\n\n📌 *Memory Verse:*\n_{memory_verse}_\n\n📝 *Lesson Text:*\n{main_text}")
+
     return "\n\n".join(message_parts)
+
+def linkify_bible_verses(text):
+    """
+    Finds Bible references in a string and formats them into tappable WhatsApp commands.
+    Example: "Read John 3:16" becomes "Read `bible John 3:16`"
+    """
+    if not text or not isinstance(text, str):
+        return text
+
+    bible_books = [
+        "Genesis", "Exodus", "Leviticus", "Numbers", "Deuteronomy", "Joshua", "Judges", "Ruth",
+        "1 Samuel", "2 Samuel", "1 Kings", "2 Kings", "1 Chronicles", "2 Chronicles", "Ezra",
+        "Nehemiah", "Esther", "Job", "Psalm", "Proverbs", "Ecclesiastes", "Song of Solomon",
+        "Isaiah", "Jeremiah", "Lamentations", "Ezekiel", "Daniel", "Hosea", "Joel", "Amos",
+        "Obadiah", "Jonah", "Micah", "Nahum", "Habakkuk", "Zephaniah", "Haggai", "Zechariah",
+        "Malachi", "Matthew", "Mark", "Luke", "John", "Acts", "Romans", "1 Corinthians",
+        "2 Corinthians", "Galatians", "Ephesians", "Philippians", "Colossians", "1 Thessalonians",
+        "2 Thessalonians", "1 Timothy", "2 Timothy", "Titus", "Philemon", "Hebrews", "James",
+        "1 Peter", "2 Peter", "1 John", "2 John", "3 John", "Jude", "Revelation"
+    ]
+
+    books_pattern = "|".join(bible_books).replace(" ", r"\s")
+    pattern = re.compile(fr'\b({books_pattern})\s+(\d+:\d+(?:-\d+)?)\b', re.IGNORECASE)
+
+    def repl(match):
+        return f"`bible {match.group(0)}`"
+
+    return pattern.sub(repl, text)
+
 def get_ai_response(question, context):
     if not gemini_model: return "Sorry, the AI thinking module is currently unavailable."
     prompt = (
@@ -317,6 +365,22 @@ def handle_bot_logic(user_id, message_text):
     user_profile = session_doc.to_dict() if session_doc.exists else {}
     
     message_text_lower = message_text.lower().strip()
+    
+    # --- HANDLE TAPPABLE BIBLE VERSE COMMANDS ---
+    if message_text_lower.startswith('bible '):
+        passage = message_text.strip().replace('bible ', '', 1)
+        # Default to the English Bible for quick lookups.
+        default_bible_file = BIBLES.get('english', {}).get('file')
+
+        if default_bible_file:
+            send_text_message(user_id, f"_Looking up {passage}..._")
+            verse_text = get_verse_from_db(passage, default_bible_file)
+            send_text_message(user_id, verse_text)
+        else:
+            send_text_message(user_id, "Sorry, the default Bible file is not configured correctly.")
+        
+        # Return to prevent disrupting the user's current session.
+        return
 
     # --- Admin Check ---
     clean_user_id = re.sub(r'\D', '', user_id)
@@ -340,8 +404,6 @@ def handle_bot_logic(user_id, message_text):
 
     # --- Mode Selection Logic ---
     if message_text_lower.startswith("mode_"):
-        # --- FIX: Robustly parse the mode ID ---
-        # "mode_camp_reg_youths" -> "camp_reg_youths"
         full_mode_id = message_text_lower.replace('mode_', '', 1)
         
         user_profile = {} # Start with a clean profile for the new mode
