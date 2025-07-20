@@ -57,16 +57,11 @@ PRIMARY_PALS_ANCHOR_DATE = date(2024, 9, 1)
 HYMNBOOKS_DIR = 'hymnbooks'
 BIBLES_DIR = 'bibles'
 LESSONS_DIR = 'lessons'
-LESSONS_FILE_SEARCH = 'search_lessons.json'
-LESSONS_FILE_ANSWER = 'answer_lessons.json'
-LESSONS_FILE_BEGINNERS = 'beginners_lessons.json'
-LESSONS_FILE_PRIMARY_PALS = 'primary_pals_lessons.json'
 
 CLASSES = { "beginners": "Beginners", "primary_pals": "Primary Pals", "answer": "Answer", "search": "Search" }
 HYMNBOOKS = { "shona": {"name": "Yellow Hymnbook Shona", "file": "shona_hymns.json"}, "english": {"name": "English Hymns", "file": "english_hymns.json"} }
 BIBLES = { "shona": {"name": "Shona Bible", "file": "shona_bible.db"}, "english": {"name": "English Bible (KJV)", "file": "english_bible.db"} }
 DEPARTMENTS = { "security": "Security", "media": "Media", "accommodation": "Accommodation", "transport": "Transport", "translation": "Translation", "kitchen": "Kitchen Work", "editorial": "Notes Taking (Editorial)"}
-# --- NEW CONFIGURATION ---
 WORKER_TYPES = { "chorister": "Chorister", "minister": "Minister", "deacon": "Deacon", "ss_teacher": "Sunday School Teacher", "none": "Not a worker" }
 ACCOMMODATION_OPTIONS = { "lodge": "Lodge", "church_assisted": "Church Assisted", "private": "Private Arrangement" }
 TRANSPORT_OPTIONS = { "directions": "I need directions", "church_transport": "I need transport to church", "private": "I have my own transport" }
@@ -97,7 +92,6 @@ def export_registrations_to_sheet(camp_type):
     try:
         docs = db.collection(collection_name).stream()
         all_rows = []
-        # --- MODIFIED HEADERS ---
         headers = [
             "Timestamp", "FirstName", "LastName", "DateOfBirth", "Age", "Gender", "ID/Passport", 
             "Phone", "Country", "City", "SalvationStatus", "Dependents", "IsWorker", "WorkerType",
@@ -111,7 +105,6 @@ def export_registrations_to_sheet(camp_type):
             timestamp_obj = data.get("timestamp")
             timestamp_str = timestamp_obj.strftime("%Y-%m-%d %H:%M:%S") if isinstance(timestamp_obj, datetime) else ""
             
-            # --- MODIFIED ROW MAPPING ---
             row = [
                 timestamp_str, data.get("first_name", ""), data.get("last_name", ""), data.get("dob", ""),
                 data.get("age", ""), data.get("gender", ""), data.get("id_passport", ""), data.get("phone", ""),
@@ -192,6 +185,14 @@ def load_json_file(file_path):
 
 def get_current_lesson_index(user_class):
     today = date.today()
+    lessons_dir = os.path.join(os.path.dirname(__file__), LESSONS_DIR)
+    lesson_files = {
+        "Beginners": os.path.join(lessons_dir, 'beginners_lessons.json'),
+        "Primary Pals": os.path.join(lessons_dir, 'primary_pals_lessons.json'),
+        "Answer": os.path.join(lessons_dir, 'answer_lessons.json'),
+        "Search": os.path.join(lessons_dir, 'search_lessons.json')
+    }
+    
     anchor = PRIMARY_PALS_ANCHOR_DATE if user_class == "Primary Pals" else ANCHOR_DATE
     anchor_week_start = anchor + relativedelta(weekday=MO(-1))
     current_week_start = today + relativedelta(weekday=MO(-1))
@@ -278,7 +279,7 @@ def format_lesson(lesson, lesson_class):
                 guide_texts.append("\n".join(devotion_lines))
             message_parts.append("\n".join(guide_texts))
             
-    else: # For Beginners and Answer classes
+    else:
         title = lesson.get('title', 'No Title')
         memory_verse = linkify_bible_verses(lesson.get('memory_verse', 'N/A'))
         main_text = "\n".join([linkify_bible_verses(t) for t in lesson.get('text', [])])
@@ -389,7 +390,6 @@ def handle_bot_logic(user_id, message_text):
         
         return
 
-    # --- Admin Check ---
     clean_user_id = re.sub(r'\D', '', user_id)
     clean_admin_numbers = [re.sub(r'\D', '', num) for num in ADMIN_NUMBERS]
     if clean_user_id in clean_admin_numbers and message_text_lower.startswith('export'):
@@ -404,12 +404,10 @@ def handle_bot_logic(user_id, message_text):
             send_text_message(user_id, "Invalid export command. Use `export youths` or `export annual`.")
             return
 
-    # --- Session Reset ---
     if message_text_lower == 'reset':
         session_ref.delete()
         user_profile = {}
 
-    # --- Mode Selection Logic ---
     if message_text_lower.startswith("mode_"):
         full_mode_id = message_text_lower.replace('mode_', '', 1)
         
@@ -423,7 +421,6 @@ def handle_bot_logic(user_id, message_text):
 
     mode = user_profile.get('mode')
 
-    # --- Main Menu Display ---
     if not mode:
         interactive = {
             "type": "list",
@@ -451,8 +448,8 @@ def handle_bot_logic(user_id, message_text):
         session_ref.set(user_profile)
         return
 
-    # --- Module Execution ---
     if mode == 'lessons':
+        # (Lesson logic remains unchanged)
         step = user_profile.get('lesson_step', 'start')
         if step == 'start':
             interactive = {
@@ -473,12 +470,20 @@ def handle_bot_logic(user_id, message_text):
 
             user_profile['lesson_class'] = user_class
             
-            lesson_files = { "Beginners": "beginners_lessons.json", "Primary Pals": "primary_pals_lessons.json", "Answer": "answer_lessons.json", "Search": "search_lessons.json" }
-            lesson_file_path = os.path.join(os.path.dirname(__file__), LESSONS_DIR, lesson_files.get(user_class, ''))
+            lessons_dir = os.path.join(os.path.dirname(__file__), LESSONS_DIR)
+            lesson_files = {
+                "Beginners": os.path.join(lessons_dir, 'beginners_lessons.json'),
+                "Primary Pals": os.path.join(lessons_dir, 'primary_pals_lessons.json'),
+                "Answer": os.path.join(lessons_dir, 'answer_lessons.json'),
+                "Search": os.path.join(lessons_dir, 'search_lessons.json')
+            }
+            lesson_file_path = lesson_files.get(user_class, '')
+            
             raw_data = load_json_file(lesson_file_path)
             if user_class == "Primary Pals" and isinstance(raw_data, dict): all_lessons = raw_data.get('primary_pals_lessons', [])
             elif isinstance(raw_data, list): all_lessons = raw_data
             else: all_lessons = []
+            
             lesson_index = get_current_lesson_index(user_class)
 
             if all_lessons and 0 <= lesson_index < len(all_lessons):
@@ -493,7 +498,7 @@ def handle_bot_logic(user_id, message_text):
                 send_interactive_message(user_id, interactive)
                 user_profile['lesson_step'] = 'awaiting_lesson_action'
             else:
-                send_text_message(user_id, "Sorry, I couldn't find the current lesson for your class.")
+                send_text_message(user_id, f"Sorry, I couldn't find the current lesson for your class. (Index: {lesson_index})")
                 session_ref.delete()
 
         elif step == 'awaiting_lesson_action':
@@ -507,7 +512,7 @@ def handle_bot_logic(user_id, message_text):
                 user_profile['lesson_step'] = 'awaiting_ai_question'
 
         elif step == 'awaiting_ai_question':
-            if message_text_lower not in ['lesson_read', 'lesson_ask']:
+            if message_text_lower not in ['lesson_read', 'lesson_ask', 'reset']:
                 context = format_lesson(user_profile.get('current_lesson_data'), user_profile.get('lesson_class'))
                 send_text_message(user_id, "_Thinking..._ 🤔")
                 ai_answer = get_ai_response(message_text, context)
@@ -517,6 +522,7 @@ def handle_bot_logic(user_id, message_text):
                 send_interactive_message(user_id, interactive)
     
     elif mode == 'hymnbook':
+        # (Hymnbook logic remains unchanged)
         step = user_profile.get('hymn_step', 'start')
         if step == 'start':
             interactive = {
@@ -552,6 +558,7 @@ def handle_bot_logic(user_id, message_text):
                 send_interactive_message(user_id, interactive)
 
     elif mode == 'bible':
+        # (Bible logic remains unchanged)
         step = user_profile.get('bible_step', 'start')
         if step == 'start':
             interactive = {
@@ -586,6 +593,8 @@ def handle_bot_logic(user_id, message_text):
         data = user_profile.setdefault('registration_data', {})
         reg_type = user_profile.get('registration_type', 'annual')
         
+        # --- REWRITTEN & CORRECTED REGISTRATION FLOW ---
+        
         if step == 'start':
             camp_name = "2025 Regional Youths Camp" if reg_type == 'youths' else "2025 Annual Camp"
             send_text_message(user_id, f"🏕️ *{camp_name} Registration*\n\nLet's get you registered. First, what is your *ID or Passport number*?")
@@ -595,24 +604,20 @@ def handle_bot_logic(user_id, message_text):
             id_passport = message_text.strip()
             if not id_passport:
                 send_text_message(user_id, "ID/Passport number cannot be empty. Please try again.")
-                return
-
-            send_text_message(user_id, f"Checking if `{id_passport}` is already registered...")
-            existing_reg = check_registration_status_firestore(id_passport, reg_type)
-            
-            if isinstance(existing_reg, dict):
-                reg_name = f"{existing_reg.get('first_name', '')} {existing_reg.get('last_name', '')}"
-                send_text_message(user_id, f"It looks like you are already registered under the name *{reg_name}* with this ID. No need to register again!\n\nReturning to the main menu.")
-                session_ref.delete()
-                return
-            elif existing_reg == "Error":
-                send_text_message(user_id, "I'm having trouble checking for duplicates right now. Please contact an admin.")
-                session_ref.delete()
-                return
-            else: 
-                data['id_passport'] = id_passport
-                send_text_message(user_id, "Great, you are not already registered. Now, what is your *first name*?")
-                user_profile['registration_step'] = 'awaiting_first_name'
+            else:
+                send_text_message(user_id, f"Checking if `{id_passport}` is already registered...")
+                existing_reg = check_registration_status_firestore(id_passport, reg_type)
+                if isinstance(existing_reg, dict):
+                    reg_name = f"{existing_reg.get('first_name', '')} {existing_reg.get('last_name', '')}"
+                    send_text_message(user_id, f"It looks like you are already registered as *{reg_name}*. No need to register again!\n\nReturning to the main menu.")
+                    session_ref.delete()
+                elif existing_reg == "Error":
+                    send_text_message(user_id, "I'm having trouble checking for duplicates right now. Please contact an admin.")
+                    session_ref.delete()
+                else: 
+                    data['id_passport'] = id_passport
+                    send_text_message(user_id, "Great, you aren't registered yet. Now, what is your *first name*?")
+                    user_profile['registration_step'] = 'awaiting_first_name'
 
         elif step == 'awaiting_first_name':
             data['first_name'] = message_text.strip()
@@ -626,25 +631,29 @@ def handle_bot_logic(user_id, message_text):
         
         elif step == 'awaiting_dob':
             age = calculate_age(message_text.strip())
-            if not age: send_text_message(user_id, "That doesn't look right. Please use DD/MM/YYYY format.")
+            if not age:
+                send_text_message(user_id, "That doesn't look right. Please use DD/MM/YYYY format.")
             else:
                 data.update({'dob': message_text.strip(), 'age': age})
                 send_text_message(user_id, "What is your *gender*? (Male / Female)")
                 user_profile['registration_step'] = 'awaiting_gender'
+                
         elif step == 'awaiting_gender':
-            if message_text_lower not in ['male', 'female']: send_text_message(user_id, "Please just answer with *Male* or *Female*.")
+            if message_text_lower not in ['male', 'female']:
+                send_text_message(user_id, "Please just answer with *Male* or *Female*.")
             else:
                 data['gender'] = message_text.strip().capitalize()
                 send_text_message(user_id, "Please enter your *phone number* (e.g., +263771234567).")
                 user_profile['registration_step'] = 'awaiting_phone_number'
+                
         elif step == 'awaiting_phone_number':
-            if not re.match(r'^\+\d{9,}$', message_text.strip()): send_text_message(user_id, "Hmm, that doesn't seem like a valid international phone number.")
+            if not re.match(r'^\+\d{9,}$', message_text.strip()):
+                send_text_message(user_id, "Hmm, that doesn't seem like a valid international phone number.")
             else:
                 data['phone'] = message_text.strip()
                 send_text_message(user_id, "What is your *country of origin*?")
                 user_profile['registration_step'] = 'awaiting_country'
         
-        # --- NEW STEPS IN REGISTRATION FLOW ---
         elif step == 'awaiting_country':
             data['country'] = message_text.strip()
             send_text_message(user_id, "And your *current city*?")
@@ -656,46 +665,55 @@ def handle_bot_logic(user_id, message_text):
             send_interactive_message(user_id, interactive)
             user_profile['registration_step'] = 'awaiting_salvation_status'
         
-        # --- END OF NEW STEPS ---
-
         elif step == 'awaiting_salvation_status':
-            if message_text_lower not in ['yes', 'no']: send_text_message(user_id, "Please tap *Yes* or *No*.")
+            if message_text_lower not in ['yes', 'no']:
+                send_text_message(user_id, "Please tap *Yes* or *No*.")
             else:
                 data['salvation_status'] = message_text.strip().capitalize()
                 send_text_message(user_id, "How many dependents (e.g., children) will be attending with you? (Enter 0 if none)")
                 user_profile['registration_step'] = 'awaiting_dependents'
+                
         elif step == 'awaiting_dependents':
-            if not message_text.strip().isdigit(): send_text_message(user_id, "Please enter a number (e.g., 0, 1, 2).")
+            if not message_text.strip().isdigit():
+                send_text_message(user_id, "Please enter a number (e.g., 0, 1, 2).")
             else:
                 data['dependents'] = message_text.strip()
                 send_text_message(user_id, "Who is your *next of kin*? (Full name).")
                 user_profile['registration_step'] = 'awaiting_nok_name'
+                
         elif step == 'awaiting_nok_name':
             data['nok_name'] = message_text.strip()
             send_text_message(user_id, "What is your *next of kin's phone number*?")
             user_profile['registration_step'] = 'awaiting_nok_phone'
+            
         elif step == 'awaiting_nok_phone':
-            if not re.match(r'^\+\d{9,}$', message_text.strip()): send_text_message(user_id, "That doesn't look like a valid phone number.")
+            if not re.match(r'^\+\d{9,}$', message_text.strip()):
+                send_text_message(user_id, "That doesn't look like a valid phone number.")
             else:
                 data['nok_phone'] = message_text.strip()
-                interactive = { "type": "button", "body": {"text": "Please select your accommodation plan:"}, "action": {"buttons": [{"type": "reply", "reply": {"id": f"acc_{key}", "title": name}} for key, name in ACCOMMODATION_OPTIONS.items()]}}
+                interactive = { "type": "list", "header": {"type": "text", "text": "Accommodation"}, "body": {"text": "Please select your accommodation plan:"}, "action": { "button": "Choose Plan", "sections": [{"title": "Options", "rows": [{"id": f"acc_{key}", "title": name} for key, name in ACCOMMODATION_OPTIONS.items()]}]}}
                 send_interactive_message(user_id, interactive)
                 user_profile['registration_step'] = 'awaiting_accommodation'
 
-        # --- NEW STEPS IN REGISTRATION FLOW ---
-        elif step == 'awaiting_accommodation' and message_text_lower.startswith('acc_'):
-            acc_key = message_text_lower.replace('acc_', '')
-            data['accommodation'] = ACCOMMODATION_OPTIONS.get(acc_key, 'N/A')
-            interactive = { "type": "button", "body": {"text": "What are your transport plans?"}, "action": {"buttons": [{"type": "reply", "reply": {"id": f"trans_{key}", "title": name}} for key, name in TRANSPORT_OPTIONS.items()]}}
-            send_interactive_message(user_id, interactive)
-            user_profile['registration_step'] = 'awaiting_transport'
+        elif step == 'awaiting_accommodation':
+            if not message_text_lower.startswith('acc_'):
+                send_text_message(user_id, "Please select an option from the list.")
+            else:
+                acc_key = message_text_lower.replace('acc_', '')
+                data['accommodation'] = ACCOMMODATION_OPTIONS.get(acc_key, 'N/A')
+                interactive = { "type": "list", "header": {"type": "text", "text": "Transport"}, "body": {"text": "What are your transport plans?"}, "action": {"button": "Choose Plan", "sections": [{"title": "Options", "rows": [{"id": f"trans_{key}", "title": name} for key, name in TRANSPORT_OPTIONS.items()]}]}}
+                send_interactive_message(user_id, interactive)
+                user_profile['registration_step'] = 'awaiting_transport'
 
-        elif step == 'awaiting_transport' and message_text_lower.startswith('trans_'):
-            trans_key = message_text_lower.replace('trans_', '')
-            data['transport'] = TRANSPORT_OPTIONS.get(trans_key, 'N/A')
-            interactive = {"type": "button", "body": {"text": "Are you a church worker?"}, "action": {"buttons": [{"type": "reply", "reply": {"id": "worker_yes", "title": "Yes"}}, {"type": "reply", "reply": {"id": "worker_no", "title": "No"}}]}}
-            send_interactive_message(user_id, interactive)
-            user_profile['registration_step'] = 'awaiting_worker_status'
+        elif step == 'awaiting_transport':
+            if not message_text_lower.startswith('trans_'):
+                send_text_message(user_id, "Please select an option from the list.")
+            else:
+                trans_key = message_text_lower.replace('trans_', '')
+                data['transport'] = TRANSPORT_OPTIONS.get(trans_key, 'N/A')
+                interactive = {"type": "button", "body": {"text": "Are you a church worker?"}, "action": {"buttons": [{"type": "reply", "reply": {"id": "worker_yes", "title": "Yes"}}, {"type": "reply", "reply": {"id": "worker_no", "title": "No"}}]}}
+                send_interactive_message(user_id, interactive)
+                user_profile['registration_step'] = 'awaiting_worker_status'
 
         elif step == 'awaiting_worker_status':
             if message_text_lower == 'worker_yes':
@@ -703,48 +721,58 @@ def handle_bot_logic(user_id, message_text):
                 interactive = { "type": "list", "header": {"type": "text", "text": "Select Worker Type"}, "body": {"text": "Please select your role from the list."}, "action": { "button": "View Roles", "sections": [{"title": "Roles", "rows": [{"id": f"w_type_{key}", "title": name} for key, name in WORKER_TYPES.items()]}]} }
                 send_interactive_message(user_id, interactive)
                 user_profile['registration_step'] = 'awaiting_worker_type'
-            else:
+            elif message_text_lower == 'worker_no':
                 data['worker_status'] = "No"
                 data['worker_type'] = "N/A"
                 camp_dates_text = "Aug 17 to Aug 24, 2025" if reg_type == 'youths' else "Dec 7 to Dec 21, 2025"
                 send_text_message(user_id, f"The camp runs from {camp_dates_text}.\n\nWhat is your *arrival date*? (e.g., Aug 17)")
                 user_profile['registration_step'] = 'awaiting_camp_start_date'
+            else:
+                send_text_message(user_id, "Please tap either Yes or No.")
         
-        elif step == 'awaiting_worker_type' and message_text_lower.startswith('w_type_'):
-            worker_key = message_text_lower.replace('w_type_', '')
-            data['worker_type'] = WORKER_TYPES.get(worker_key, 'N/A')
-            camp_dates_text = "Aug 17 to Aug 24, 2025" if reg_type == 'youths' else "Dec 7 to Dec 21, 2025"
-            send_text_message(user_id, f"The camp runs from {camp_dates_text}.\n\nWhat is your *arrival date*? (e.g., Aug 17)")
-            user_profile['registration_step'] = 'awaiting_camp_start_date'
-
-        # --- END OF NEW STEPS ---
+        elif step == 'awaiting_worker_type':
+            if not message_text_lower.startswith('w_type_'):
+                send_text_message(user_id, "Please select a role from the list.")
+            else:
+                worker_key = message_text_lower.replace('w_type_', '')
+                data['worker_type'] = WORKER_TYPES.get(worker_key, 'N/A')
+                camp_dates_text = "Aug 17 to Aug 24, 2025" if reg_type == 'youths' else "Dec 7 to Dec 21, 2025"
+                send_text_message(user_id, f"The camp runs from {camp_dates_text}.\n\nWhat is your *arrival date*? (e.g., Aug 17)")
+                user_profile['registration_step'] = 'awaiting_camp_start_date'
 
         elif step == 'awaiting_camp_start_date':
             data['camp_start'] = message_text.strip()
             send_text_message(user_id, "And your *departure date*?")
             user_profile['registration_step'] = 'awaiting_camp_end_date'
+            
         elif step == 'awaiting_camp_end_date':
             data['camp_end'] = message_text.strip()
             interactive = {"type": "button", "body": {"text": "Are you willing to assist voluntarily during the camp?"}, "action": {"buttons": [{"type": "reply", "reply": {"id": "yes", "title": "Yes, I'll help"}}, {"type": "reply", "reply": {"id": "no", "title": "No, thanks"}}]}}
             send_interactive_message(user_id, interactive)
             user_profile['registration_step'] = 'awaiting_volunteer_status'
+            
         elif step == 'awaiting_volunteer_status':
-            if message_text_lower not in ['yes', 'no']: send_text_message(user_id, "Please tap one of the buttons.")
+            if message_text_lower == 'yes':
+                data['volunteer_status'] = "Yes"
+                interactive = { "type": "list", "header": {"type": "text", "text": "Select Department"}, "body": {"text": "That's wonderful! Please choose a department where you'd like to help."}, "action": { "button": "View Departments", "sections": [{"title": "Departments", "rows": [{"id": f"dept_{key}", "title": name} for key, name in DEPARTMENTS.items()]}]} }
+                send_interactive_message(user_id, interactive)
+                user_profile['registration_step'] = 'awaiting_volunteer_department'
+            elif message_text_lower == 'no':
+                data['volunteer_status'] = "No"
+                data['volunteer_department'] = 'N/A'
+                _send_confirmation_message(user_id, data, "Camp")
+                user_profile['registration_step'] = 'awaiting_confirmation'
             else:
-                data['volunteer_status'] = "Yes" if message_text_lower == 'yes' else "No"
-                if message_text_lower == 'yes':
-                    interactive = { "type": "list", "header": {"type": "text", "text": "Select Department"}, "body": {"text": "That's wonderful! Please choose a department where you'd like to help."}, "action": { "button": "View Departments", "sections": [{"title": "Departments", "rows": [{"id": f"dept_{key}", "title": name} for key, name in DEPARTMENTS.items()]}]} }
-                    send_interactive_message(user_id, interactive)
-                    user_profile['registration_step'] = 'awaiting_volunteer_department'
-                else:
-                    data['volunteer_department'] = 'N/A'
-                    _send_confirmation_message(user_id, data, "Camp")
-                    user_profile['registration_step'] = 'awaiting_confirmation'
-        elif step == 'awaiting_volunteer_department' and message_text_lower.startswith('dept_'):
-            dept_key = message_text_lower.replace('dept_', '', 1)
-            data['volunteer_department'] = DEPARTMENTS[dept_key]
-            _send_confirmation_message(user_id, data, "Camp")
-            user_profile['registration_step'] = 'awaiting_confirmation'
+                send_text_message(user_id, "Please tap one of the buttons.")
+
+        elif step == 'awaiting_volunteer_department':
+            if not message_text_lower.startswith('dept_'):
+                send_text_message(user_id, "Please select a department from the list.")
+            else:
+                dept_key = message_text_lower.replace('dept_', '', 1)
+                data['volunteer_department'] = DEPARTMENTS[dept_key]
+                _send_confirmation_message(user_id, data, "Camp")
+                user_profile['registration_step'] = 'awaiting_confirmation'
 
         elif step == 'awaiting_confirmation':
             if message_text_lower == 'confirm_reg':
@@ -756,12 +784,13 @@ def handle_bot_logic(user_id, message_text):
                 session_ref.delete()
                 return
             elif message_text_lower == 'restart_reg':
-                user_profile['registration_step'] = 'start'
-                user_profile['registration_data'] = {}
-                handle_bot_logic(user_id, "restart_internal")
+                user_profile.update({'registration_step': 'start', 'registration_data': {}})
+                # Re-call the function to restart the flow immediately
+                handle_bot_logic(user_id, "restart_internal") 
                 return
 
     elif mode == 'check_status':
+        # (Check status logic remains unchanged)
         step = user_profile.get('check_step', 'start')
         if step == 'start':
             interactive = {"type": "button", "body": {"text": "Which camp registration would you like to check?"}, "action": {"buttons": [{"type": "reply", "reply": {"id": "check_youths", "title": "Youths Camp"}}, {"type": "reply", "reply": {"id": "check_annual", "title": "Annual Camp"}}]}}
@@ -800,7 +829,6 @@ def handle_bot_logic(user_id, message_text):
     session_ref.set(user_profile)
 
 def _send_confirmation_message(user_id, data, camp_name):
-    # --- MODIFIED CONFIRMATION MESSAGE ---
     worker_info = f"{data.get('worker_type', '')}" if data.get('worker_status') == 'Yes' else 'No'
     
     conf_text = (
@@ -861,6 +889,7 @@ def whatsapp_webhook():
                                     handle_bot_logic(user_id, msg_text)
         except Exception as e:
             print(f"Error processing webhook message: {e}")
+            # It's good practice to still return a 200 OK to prevent WhatsApp from resending the message
         return 'OK', 200
 
 @app.route('/')
