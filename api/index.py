@@ -1,3 +1,4 @@
+
 import os
 import json
 import requests
@@ -66,6 +67,7 @@ CLASSES = { "beginners": "Beginners", "primary_pals": "Primary Pals", "answer": 
 HYMNBOOKS = { "shona": {"name": "Yellow Hymnbook Shona", "file": "shona_hymns.json"}, "english": {"name": "English Hymns", "file": "english_hymns.json"} }
 BIBLES = { "shona": {"name": "Shona Bible", "file": "shona_bible.db"}, "english": {"name": "English Bible (KJV)", "file": "english_bible.db"} }
 DEPARTMENTS = { "security": "Security", "media": "Media", "accommodation": "Accommodation", "transport": "Transport", "translation": "Translation", "kitchen": "Kitchen Work", "editorial": "Notes Taking (Editorial)"}
+WORKER_TYPES = {"minister": "Minister", "deacon": "Deacon", "sunday_school_teacher": "Sunday School Teacher", "none": "None of the above"}
 
 # --- 3. HELPER & DATABASE FUNCTIONS ---
 def get_firestore_collection_name(camp_type):
@@ -92,7 +94,7 @@ def export_registrations_to_sheet(camp_type):
     try:
         docs = db.collection(collection_name).stream()
         all_rows = []
-        headers = ["Timestamp", "FirstName", "LastName", "DateOfBirth", "Age", "Gender", "ID/Passport", "Phone", "SalvationStatus", "Dependents", "Volunteering", "VolunteerDepartment", "NextOfKinName", "NextOfKinPhone", "CampStay"]
+        headers = ["Timestamp", "FirstName", "LastName", "DateOfBirth", "Age", "Gender", "ID/Passport", "Phone", "SalvationStatus", "Dependents", "Volunteering", "VolunteerDepartment", "IsWorker", "WorkerType", "TransportAssistance", "NextOfKinName", "NextOfKinPhone", "CampStay"]
         all_rows.append(headers)
 
         for doc in docs:
@@ -104,7 +106,8 @@ def export_registrations_to_sheet(camp_type):
                 timestamp_str, data.get("first_name", ""), data.get("last_name", ""), data.get("dob", ""),
                 data.get("age", ""), data.get("gender", ""), data.get("id_passport", ""), data.get("phone", ""),
                 data.get("salvation_status", ""), data.get("dependents", ""), data.get("volunteer_status", ""),
-                data.get("volunteer_department", ""), data.get("nok_name", ""), data.get("nok_phone", ""),
+                data.get("volunteer_department", ""), data.get("is_worker", ""), data.get("worker_type", ""),
+                data.get("transport_assistance", ""), data.get("nok_name", ""), data.get("nok_phone", ""),
                 f"{data.get('camp_start', '')} to {data.get('camp_end', '')}"
             ]
             all_rows.append(row)
@@ -260,7 +263,7 @@ def format_lesson(lesson, lesson_class):
             devotions = parent_guide.get('family_devotions', {}).get('verses', [])
             if devotions:
                 devotion_lines = ["*Family Devotions:*"]
-                for dev in devotions: devotion_lines.append(f"  - *{dev.get('day')}:* {linkify_bible_verses(dev.get('reference'))}")
+                for dev in devotions: devotion_lines.append(f"  - *{dev.get('day')}:* {linkify_bible_verses(dev.get('reference'))}")
                 guide_texts.append("\n".join(devotion_lines))
             message_parts.append("\n".join(guide_texts))
             
@@ -611,181 +614,322 @@ def handle_bot_logic(user_id, message_text):
             user_profile['registration_step'] = 'awaiting_dob'
         
         elif step == 'awaiting_dob':
-            age = calculate_age(message_text.strip())
-            if not age: send_text_message(user_id, "That doesn't look right. Please use DD/MM/YYYY format.")
-            else:
-                data.update({'dob': message_text.strip(), 'age': age})
-                send_text_message(user_id, "What is your *gender*? (Male / Female)")
-                user_profile['registration_step'] = 'awaiting_gender'
-        elif step == 'awaiting_gender':
-            if message_text_lower not in ['male', 'female']: send_text_message(user_id, "Please just answer with *Male* or *Female*.")
-            else:
-                data['gender'] = message_text.strip().capitalize()
-                send_text_message(user_id, "Please enter your *phone number* (e.g., +263771234567).")
-                user_profile['registration_step'] = 'awaiting_phone_number'
-        elif step == 'awaiting_phone_number':
-            if not re.match(r'^\+\d{9,}$', message_text.strip()): send_text_message(user_id, "Hmm, that doesn't seem like a valid international phone number.")
-            else:
-                data['phone'] = message_text.strip()
-                interactive = {"type": "button", "body": {"text": "Are you saved?"}, "action": {"buttons": [{"type": "reply", "reply": {"id": "yes", "title": "Yes"}}, {"type": "reply", "reply": {"id": "no", "title": "No"}}]}}
-                send_interactive_message(user_id, interactive)
-                user_profile['registration_step'] = 'awaiting_salvation_status'
-        elif step == 'awaiting_salvation_status':
-            if message_text_lower not in ['yes', 'no']: send_text_message(user_id, "Please tap *Yes* or *No*.")
-            else:
-                data['salvation_status'] = message_text.strip().capitalize()
-                send_text_message(user_id, "How many dependents (e.g., children) will be attending with you? (Enter 0 if none)")
-                user_profile['registration_step'] = 'awaiting_dependents'
-        elif step == 'awaiting_dependents':
-            if not message_text.strip().isdigit(): send_text_message(user_id, "Please enter a number (e.g., 0, 1, 2).")
-            else:
-                data['dependents'] = message_text.strip()
-                send_text_message(user_id, "Who is your *next of kin*? (Full name).")
-                user_profile['registration_step'] = 'awaiting_nok_name'
-        elif step == 'awaiting_nok_name':
-            data['nok_name'] = message_text.strip()
-            send_text_message(user_id, "What is your *next of kin's phone number*?")
-            user_profile['registration_step'] = 'awaiting_nok_phone'
-        elif step == 'awaiting_nok_phone':
-            if not re.match(r'^\+\d{9,}$', message_text.strip()): send_text_message(user_id, "That doesn't look like a valid phone number.")
-            else:
-                data['nok_phone'] = message_text.strip()
-                camp_dates_text = "Aug 17 to Aug 24, 2025" if reg_type == 'youths' else "Dec 7 to Dec 21, 2025"
-                send_text_message(user_id, f"The camp runs from {camp_dates_text}.\n\nWhat is your *arrival date*? (e.g., Aug 17)")
-                user_profile['registration_step'] = 'awaiting_camp_start_date'
-        elif step == 'awaiting_camp_start_date':
-            data['camp_start'] = message_text.strip()
-            send_text_message(user_id, "And your *departure date*?")
-            user_profile['registration_step'] = 'awaiting_camp_end_date'
-        elif step == 'awaiting_camp_end_date':
-            data['camp_end'] = message_text.strip()
-            interactive = {"type": "button", "body": {"text": "Are you willing to assist voluntarily?"}, "action": {"buttons": [{"type": "reply", "reply": {"id": "yes", "title": "Yes, I'll help"}}, {"type": "reply", "reply": {"id": "no", "title": "No, thanks"}}]}}
+            dob_string = message_text.strip()
+            age = calculate_age(dob_string)
+            if age is None:
+                send_text_message(user_id, "Invalid date format. Please use DD/MM/YYYY (e.g., 25/12/1990).")
+                return
+            
+            data['dob'] = dob_string
+            data['age'] = age
+            send_text_message(user_id, "What is your *gender*?")
+            interactive = {
+                "type": "button",
+                "body": {"text": "Please select your gender:"},
+                "action": {"buttons": [{"type": "reply", "reply": {"id": "gender_male", "title": "Male"}}, {"type": "reply", "reply": {"id": "gender_female", "title": "Female"}}]}
+            }
             send_interactive_message(user_id, interactive)
-            user_profile['registration_step'] = 'awaiting_volunteer_status'
-        elif step == 'awaiting_volunteer_status':
-            if message_text_lower not in ['yes', 'no']: send_text_message(user_id, "Please tap one of the buttons.")
+            user_profile['registration_step'] = 'awaiting_gender'
+        
+        elif step == 'awaiting_gender' and message_text_lower.startswith('gender_'):
+            gender = message_text_lower.replace('gender_', '', 1)
+            if gender not in ['male', 'female']:
+                send_text_message(user_id, "Invalid gender selection. Please use the buttons.")
+                return
+            data['gender'] = gender.capitalize()
+            send_text_message(user_id, "What is your *phone number* (e.g., +263771234567)?")
+            user_profile['registration_step'] = 'awaiting_phone'
+
+        elif step == 'awaiting_phone':
+            phone_number = message_text.strip()
+            if not re.fullmatch(r'^\+\d{1,3}\d{9}$', phone_number):
+                send_text_message(user_id, "Invalid phone number format. Please include country code, e.g., +263771234567.")
+                return
+            data['phone'] = phone_number
+            send_text_message(user_id, "What is your *salvation status*?")
+            interactive = {
+                "type": "button",
+                "body": {"text": "Please select your salvation status:"},
+                "action": {"buttons": [
+                    {"type": "reply", "reply": {"id": "salvation_born_again", "title": "Born Again"}},
+                    {"type": "reply", "reply": {"id": "salvation_not_born_again", "title": "Not Born Again"}}
+                ]}
+            }
+            send_interactive_message(user_id, interactive)
+            user_profile['registration_step'] = 'awaiting_salvation_status'
+            
+        elif step == 'awaiting_salvation_status' and message_text_lower.startswith('salvation_'):
+            status = message_text_lower.replace('salvation_', '', 1).replace('_', ' ').title()
+            data['salvation_status'] = status
+            
+            if reg_type == 'annual':
+                send_text_message(user_id, "Are you registering any *dependents* (children/family under your care)? Reply 'Yes' or 'No'.")
+                user_profile['registration_step'] = 'awaiting_dependents_status'
+            else: # Youth Camp does not have dependents
+                data['dependents'] = 'No'
+                send_text_message(user_id, "Are you a *worker* (Minister, Deacon, Sunday school teacher)? Reply 'Yes' or 'No'.")
+                user_profile['registration_step'] = 'awaiting_is_worker'
+
+        elif step == 'awaiting_dependents_status':
+            response = message_text_lower
+            if response in ['yes', 'no']:
+                data['dependents'] = response.capitalize()
+                send_text_message(user_id, "Are you a *worker* (Minister, Deacon, Sunday school teacher)? Reply 'Yes' or 'No'.")
+                user_profile['registration_step'] = 'awaiting_is_worker'
             else:
-                data['volunteer_status'] = "Yes" if message_text_lower == 'yes' else "No"
-                if message_text_lower == 'yes':
-                    interactive = { "type": "list", "header": {"type": "text", "text": "Select Department"}, "body": {"text": "That's wonderful! Please choose a department where you'd like to help."}, "action": { "button": "View Departments", "sections": [{"title": "Departments", "rows": [{"id": f"dept_{key}", "title": name} for key, name in DEPARTMENTS.items()]}]} }
+                send_text_message(user_id, "Invalid response. Please reply 'Yes' or 'No'.")
+        
+        elif step == 'awaiting_is_worker':
+            response = message_text_lower
+            if response in ['yes', 'no']:
+                data['is_worker'] = response.capitalize()
+                if response == 'yes':
+                    worker_options = [{"id": f"worker_{key}", "title": name} for key, name in WORKER_TYPES.items() if key != "none"]
+                    interactive = {
+                        "type": "list", "header": {"type": "text", "text": "Select Worker Type"},
+                        "body": {"text": "What type of worker are you?"},
+                        "action": { "button": "View Worker Types", "sections": [{"title": "Worker Types", "rows": worker_options}]}
+                    }
+                    send_interactive_message(user_id, interactive)
+                    user_profile['registration_step'] = 'awaiting_worker_type'
+                else:
+                    data['worker_type'] = 'N/A'
+                    send_text_message(user_id, "Do you wish to *volunteer* for any department during the camp? Reply 'Yes' or 'No'.")
+                    user_profile['registration_step'] = 'awaiting_volunteer_status'
+            else:
+                send_text_message(user_id, "Invalid response. Please reply 'Yes' or 'No'.")
+
+        elif step == 'awaiting_worker_type' and message_text_lower.startswith('worker_'):
+            worker_key = message_text_lower.replace('worker_', '', 1)
+            worker_type_name = WORKER_TYPES.get(worker_key)
+            if not worker_type_name or worker_key == 'none':
+                send_text_message(user_id, "Invalid worker type selection. Please use the buttons.")
+                return
+            data['worker_type'] = worker_type_name
+            send_text_message(user_id, "Do you wish to *volunteer* for any department during the camp? Reply 'Yes' or 'No'.")
+            user_profile['registration_step'] = 'awaiting_volunteer_status'
+
+        elif step == 'awaiting_volunteer_status':
+            response = message_text_lower
+            if response in ['yes', 'no']:
+                data['volunteer_status'] = response.capitalize()
+                if response == 'yes':
+                    department_options = [{"id": f"dept_{key}", "title": name} for key, name in DEPARTMENTS.items()]
+                    interactive = {
+                        "type": "list", "header": {"type": "text", "text": "Select Department"},
+                        "body": {"text": "Which department would you like to volunteer for?"},
+                        "action": { "button": "View Departments", "sections": [{"title": "Departments", "rows": department_options}]}
+                    }
                     send_interactive_message(user_id, interactive)
                     user_profile['registration_step'] = 'awaiting_volunteer_department'
                 else:
                     data['volunteer_department'] = 'N/A'
-                    _send_confirmation_message(user_id, data, "Camp")
-                    user_profile['registration_step'] = 'awaiting_confirmation'
+                    send_text_message(user_id, "Do you need *transport assistance* upon arrival at the camp? Reply 'Yes' or 'No'.")
+                    user_profile['registration_step'] = 'awaiting_transport_assistance'
+            else:
+                send_text_message(user_id, "Invalid response. Please reply 'Yes' or 'No'.")
+
         elif step == 'awaiting_volunteer_department' and message_text_lower.startswith('dept_'):
             dept_key = message_text_lower.replace('dept_', '', 1)
-            data['volunteer_department'] = DEPARTMENTS[dept_key]
-            _send_confirmation_message(user_id, data, "Camp")
-            user_profile['registration_step'] = 'awaiting_confirmation'
+            department_name = DEPARTMENTS.get(dept_key)
+            if not department_name:
+                send_text_message(user_id, "Invalid department selection. Please use the buttons.")
+                return
+            data['volunteer_department'] = department_name
+            send_text_message(user_id, "Do you need *transport assistance* upon arrival at the camp? Reply 'Yes' or 'No'.")
+            user_profile['registration_step'] = 'awaiting_transport_assistance'
+        
+        elif step == 'awaiting_transport_assistance':
+            response = message_text_lower
+            if response in ['yes', 'no']:
+                data['transport_assistance'] = response.capitalize()
+                send_text_message(user_id, "What is the *full name of your next of kin*?")
+                user_profile['registration_step'] = 'awaiting_nok_name'
+            else:
+                send_text_message(user_id, "Invalid response. Please reply 'Yes' or 'No'.")
 
-        elif step == 'awaiting_confirmation':
-            if message_text_lower == 'confirm_reg':
-                data['timestamp'] = firestore.SERVER_TIMESTAMP
-                collection_name = get_firestore_collection_name(reg_type)
-                doc_ref = db.collection(collection_name).document(data['id_passport'])
-                doc_ref.set(data)
-                send_text_message(user_id, "✅ Registration successful! Your details have been saved to our database.")
+        elif step == 'awaiting_nok_name':
+            data['nok_name'] = message_text.strip()
+            send_text_message(user_id, "What is your *next of kin's phone number* (e.g., +263771234567)?")
+            user_profile['registration_step'] = 'awaiting_nok_phone'
+
+        elif step == 'awaiting_nok_phone':
+            nok_phone = message_text.strip()
+            if not re.fullmatch(r'^\+\d{1,3}\d{9}$', nok_phone):
+                send_text_message(user_id, "Invalid phone number format. Please include country code, e.g., +263771234567.")
+                return
+            data['nok_phone'] = nok_phone
+            
+            # Camp Stay Dates
+            send_text_message(user_id, "What *date do you plan to arrive* at the camp? (DD/MM/YYYY)")
+            user_profile['registration_step'] = 'awaiting_camp_start_date'
+
+        elif step == 'awaiting_camp_start_date':
+            camp_start_date_str = message_text.strip()
+            try:
+                camp_start_date = datetime.strptime(camp_start_date_str, "%d/%m/%Y").date()
+                data['camp_start'] = camp_start_date_str
+                send_text_message(user_id, "What *date do you plan to leave* the camp? (DD/MM/YYYY)")
+                user_profile['registration_step'] = 'awaiting_camp_end_date'
+            except ValueError:
+                send_text_message(user_id, "Invalid date format. Please use DD/MM/YYYY (e.g., 01/08/2025).")
+
+        elif step == 'awaiting_camp_end_date':
+            camp_end_date_str = message_text.strip()
+            try:
+                camp_end_date = datetime.strptime(camp_end_date_str, "%d/%m/%Y").date()
+                data['camp_end'] = camp_end_date_str
+                
+                # Summary and Confirmation
+                summary = (
+                    f"📝 *Registration Summary for {reg_type.capitalize()} Camp:*\n\n"
+                    f"Name: {data.get('first_name')} {data.get('last_name')}\n"
+                    f"ID/Passport: {data.get('id_passport')}\n"
+                    f"Date of Birth: {data.get('dob')} (Age: {data.get('age')})\n"
+                    f"Gender: {data.get('gender')}\n"
+                    f"Phone: {data.get('phone')}\n"
+                    f"Salvation Status: {data.get('salvation_status')}\n"
+                )
+                if reg_type == 'annual':
+                    summary += f"Dependents: {data.get('dependents')}\n"
+                summary += (
+                    f"Worker: {data.get('is_worker')}\n"
+                    f"Worker Type: {data.get('worker_type')}\n"
+                    f"Volunteering: {data.get('volunteer_status')}\n"
+                    f"Department: {data.get('volunteer_department')}\n"
+                    f"Transport Assistance: {data.get('transport_assistance')}\n"
+                    f"Next of Kin: {data.get('nok_name')} ({data.get('nok_phone')})\n"
+                    f"Camp Stay: {data.get('camp_start')} to {data.get('camp_end')}\n\n"
+                    "Does this all look correct?"
+                )
+                
+                interactive = {
+                    "type": "button",
+                    "body": {"text": summary},
+                    "action": {"buttons": [{"type": "reply", "reply": {"id": "reg_confirm_yes", "title": "✅ Yes, Confirm"}}, {"type": "reply", "reply": {"id": "reg_confirm_no", "title": "❌ No, Restart"}}]}
+                }
+                send_interactive_message(user_id, interactive)
+                user_profile['registration_step'] = 'awaiting_final_confirmation'
+            except ValueError:
+                send_text_message(user_id, "Invalid date format. Please use DD/MM/YYYY (e.g., 10/08/2025).")
+
+        elif step == 'awaiting_final_confirmation' and message_text_lower.startswith('reg_confirm_'):
+            confirmation = message_text_lower.replace('reg_confirm_', '', 1)
+            if confirmation == 'yes':
+                try:
+                    collection_name = get_firestore_collection_name(reg_type)
+                    doc_ref = db.collection(collection_name).document(data['id_passport'])
+                    data['timestamp'] = firestore.SERVER_TIMESTAMP
+                    doc_ref.set(data)
+                    send_text_message(user_id, "🎉 *Registration Complete!* 🎉\n\nThank you for registering. We look forward to seeing you at camp!\n\nReturning to the main menu.")
+                except Exception as e:
+                    print(f"Firestore save error: {e}")
+                    send_text_message(user_id, "There was an error saving your registration. Please try again later or contact an administrator.")
+                session_ref.delete()
+            else:
+                send_text_message(user_id, "Okay, let's restart your registration. To begin, what is your *ID or Passport number*?")
+                user_profile['registration_data'] = {}
+                user_profile['registration_step'] = 'awaiting_id_passport'
+    
+    elif mode == 'check_status':
+        step = user_profile.get('check_status_step', 'start')
+        if step == 'start':
+            send_text_message(user_id, "Which camp registration status do you want to check?")
+            interactive = {
+                "type": "button",
+                "body": {"text": "Please choose a camp type:"},
+                "action": {"buttons": [
+                    {"type": "reply", "reply": {"id": "check_status_youths", "title": "Youths Camp"}},
+                    {"type": "reply", "reply": {"id": "check_status_annual", "title": "Annual Camp"}}
+                ]}
+            }
+            send_interactive_message(user_id, interactive)
+            user_profile['check_status_step'] = 'awaiting_camp_type'
+
+        elif step == 'awaiting_camp_type' and message_text_lower.startswith('check_status_'):
+            camp_type = message_text_lower.replace('check_status_', '', 1)
+            if camp_type not in ['youths', 'annual']:
+                send_text_message(user_id, "Invalid camp type. Please use the buttons.")
                 session_ref.delete()
                 return
-            elif message_text_lower == 'restart_reg':
-                user_profile['registration_step'] = 'start'
-                user_profile['registration_data'] = {}
-                handle_bot_logic(user_id, "restart_internal")
-                return
 
-    elif mode == 'check_status':
-        step = user_profile.get('check_step', 'start')
-        if step == 'start':
-            interactive = {"type": "button", "body": {"text": "Which camp registration would you like to check?"}, "action": {"buttons": [{"type": "reply", "reply": {"id": "check_youths", "title": "Youths Camp"}}, {"type": "reply", "reply": {"id": "check_annual", "title": "Annual Camp"}}]}}
-            send_interactive_message(user_id, interactive)
-            user_profile['check_step'] = 'awaiting_camp_choice'
-        
-        elif step == 'awaiting_camp_choice' and message_text_lower.startswith('check_'):
-            camp_type = message_text_lower.replace('check_', '', 1)
-            user_profile['camp_to_check'] = camp_type
-            send_text_message(user_id, "Got it. Please enter the *ID/Passport Number* you used to register.")
-            user_profile['check_step'] = 'awaiting_identifier'
-        
-        elif step == 'awaiting_identifier':
+            user_profile['check_camp_type'] = camp_type
+            send_text_message(user_id, f"You've selected *{camp_type.capitalize()} Camp*. Please enter the *ID or Passport number* you used for registration.")
+            user_profile['check_status_step'] = 'awaiting_id_for_check'
+
+        elif step == 'awaiting_id_for_check':
             identifier = message_text.strip()
-            camp_type = user_profile.get('camp_to_check')
-            send_text_message(user_id, f"Checking for '{identifier}'...")
-            status = check_registration_status_firestore(identifier, camp_type)
+            if not identifier:
+                send_text_message(user_id, "ID/Passport number cannot be empty. Please try again.")
+                return
             
-            if status == "Error":
-                 send_text_message(user_id, "Sorry, a technical error occurred. Please try again later.")
-            elif isinstance(status, dict):
-                confirm_msg = (
-                    f"✅ *Registration Found!* ✅\n\n"
-                    f"Hi *{status.get('first_name', '')} {status.get('last_name', '')}*!\n"
-                    f"Your registration is confirmed.\n\n"
-                    f"*ID/Passport:* {status.get('id_passport', '')}\n"
-                    f"*Phone:* {status.get('phone', '')}"
+            camp_type = user_profile.get('check_camp_type')
+            send_text_message(user_id, f"Checking status for `{identifier}` in *{camp_type} camp*...")
+            status_data = check_registration_status_firestore(identifier, camp_type)
+
+            if isinstance(status_data, dict):
+                summary = (
+                    f"✅ *Registration Found for {status_data.get('first_name')} {status_data.get('last_name')}* ✅\n\n"
+                    f"Camp Type: {camp_type.capitalize()} Camp\n"
+                    f"ID/Passport: {status_data.get('id_passport')}\n"
+                    f"Phone: {status_data.get('phone')}\n"
+                    f"Registered On: {status_data.get('timestamp').strftime('%Y-%m-%d %H:%M:%S') if status_data.get('timestamp') else 'N/A'}\n"
+                    f"Camp Stay: {status_data.get('camp_start', '')} to {status_data.get('camp_end', '')}\n"
                 )
-                send_text_message(user_id, confirm_msg)
-            else:
-                send_text_message(user_id, f"❌ *No Registration Found*\n\nI could not find a registration matching '{identifier}'.")
+                if status_data.get('is_worker'):
+                    summary += f"Worker: {status_data.get('is_worker')}\n"
+                    summary += f"Worker Type: {status_data.get('worker_type')}\n"
+                if status_data.get('transport_assistance'):
+                    summary += f"Transport Assistance: {status_data.get('transport_assistance')}\n"
+                summary += "\nYou are all set!"
+                send_text_message(user_id, summary)
+            elif status_data is None:
+                send_text_message(user_id, f"❌ No registration found for `{identifier}` in *{camp_type.capitalize()} Camp*.")
+            else: # "Error"
+                send_text_message(user_id, "I'm having trouble checking the status right now. Please try again later.")
             
+            send_text_message(user_id, "Returning to the main menu.")
             session_ref.delete()
-            return
-    
-    session_ref.set(user_profile)
 
-def _send_confirmation_message(user_id, data, camp_name):
-    conf_text = (
-        f"📝 *Please confirm your details for the {camp_name}:*\n\n"
-        f"*Name:* {data.get('first_name', '')} {data.get('last_name', '')}\n"
-        f"*Gender:* {data.get('gender', '')}\n"
-        f"*Date of Birth:* {data.get('dob', '')} (Age: {data.get('age', 'N/A')})\n"
-        f"*ID/Passport:* {data.get('id_passport', '')}\n"
-        f"*Phone:* {data.get('phone', '')}\n\n"
-        f"*Salvation Status:* {data.get('salvation_status', '')}\n"
-        f"*Dependents Attending:* {data.get('dependents', '0')}\n"
-        f"*Volunteering:* {data.get('volunteer_status', '')}"
-        f"{' (' + data.get('volunteer_department', '') + ')' if data.get('volunteer_status') == 'Yes' else ''}\n\n"
-        f"*Next of Kin:* {data.get('nok_name', '')}\n"
-        f"*NOK Phone:* {data.get('nok_phone', '')}\n\n"
-        f"*Camp Stay:* {data.get('camp_start', '')} to {data.get('camp_end', '')}\n\n"
-        "Is everything correct?"
-    )
-    interactive = {"type": "button", "body": {"text": conf_text}, "action": {"buttons": [{"type": "reply", "reply": {"id": "confirm_reg", "title": "✅ Confirm & Submit"}}, {"type": "reply", "reply": {"id": "restart_reg", "title": "❌ Restart"}}]} }
-    send_interactive_message(user_id, interactive)
+    session_ref.set(user_profile) # Save session state
 
-@app.route('/whatsapp', methods=['GET', 'POST'])
+
+@app.route('/whatsapp/webhook', methods=['GET', 'POST'])
 def whatsapp_webhook():
     if request.method == 'GET':
-        if request.args.get('hub.verify_token') == VERIFY_TOKEN:
-            return request.args.get('hub.challenge'), 200
-        return 'Verification token mismatch', 403
+        mode = request.args.get('hub.mode')
+        token = request.args.get('hub.verify_token')
+        challenge = request.args.get('hub.challenge')
+        if mode and token:
+            if mode == 'subscribe' and token == VERIFY_TOKEN:
+                print("WEBHOOK_VERIFIED")
+                return challenge, 200
+            else:
+                return "Verification token mismatch", 403
+        return "Missing parameters", 400
     
-    if request.method == 'POST':
+    elif request.method == 'POST':
         data = request.get_json()
-        try:
-            if data and 'entry' in data:
-                for entry in data['entry']:
-                    for change in entry.get('changes', []):
-                        if 'messages' in change.get('value', {}):
-                            for message in change['value']['messages']:
+        print(f"Received webhook event: {json.dumps(data, indent=2)}")
+
+        if 'object' in data and 'entry' in data:
+            for entry in data['entry']:
+                for change in entry['changes']:
+                    if 'value' in change and 'messages' in change['value']:
+                        for message in change['value']['messages']:
+                            if message['type'] == 'text':
                                 user_id = message['from']
-                                msg_text = ''
-                                
-                                if message.get('type') == 'text':
-                                    msg_text = message['text']['body']
-                                elif message.get('type') == 'interactive':
-                                    interactive_type = message['interactive']['type']
-                                    if interactive_type == 'button_reply':
-                                        msg_text = message['interactive']['button_reply']['id']
-                                    elif interactive_type == 'list_reply':
-                                        msg_text = message['interactive']['list_reply']['id']
-                                
-                                if msg_text:
-                                    handle_bot_logic(user_id, msg_text)
-        except Exception as e:
-            print(f"Error processing webhook message: {e}")
+                                message_text = message['text']['body']
+                                handle_bot_logic(user_id, message_text)
+                            elif message['type'] == 'interactive':
+                                user_id = message['from']
+                                if 'button_reply' in message['interactive']:
+                                    button_id = message['interactive']['button_reply']['id']
+                                    handle_bot_logic(user_id, button_id)
+                                elif 'list_reply' in message['interactive']:
+                                    list_id = message['interactive']['list_reply']['id']
+                                    handle_bot_logic(user_id, list_id)
         return 'OK', 200
 
-@app.route('/')
-def health_check():
-    return "SundayBot Interactive UI with Firebase is running!", 200
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=os.environ.get('PORT', 5000))
