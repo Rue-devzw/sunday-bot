@@ -790,7 +790,7 @@ def _send_confirmation_message(user_id, data, camp_name):
         f"*Camp Stay:* {data.get('camp_start', '')} to {data.get('camp_end', '')}\n\n"
         "Is everything correct?"
     )
-    interactive = {"type": "button", "body": {"text": conf_text}, "action": {"buttons": [{"type": "reply", "reply": {"id": "confirm_reg", "title": "✅ Confirm & Submit"}}, {"type": "reply", "reply": {"id": "restart_reg", "title": "❌ Restart"}}]} }
+    interactive = {"type": "button", "body": {"text": conf_text}, "action": {"buttons": [{"type": "reply", "reply": {"id": "confirm_reg", "title": "✅ Confirm & Submit"}}, {"type": "reply", "reply": {"id": "restart_reg", "title": "❌ Reset"}}]} }
     send_interactive_message(user_id, interactive)
 
 @app.route('/whatsapp', methods=['GET', 'POST'])
