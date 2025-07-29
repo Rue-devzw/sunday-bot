@@ -49,7 +49,7 @@ GOOGLE_CREDENTIALS_JSON = os.environ.get('GOOGLE_CREDENTIALS_JSON')
 ANNUAL_CAMP_SHEET_NAME = os.environ.get('ANNUAL_CAMP_SHEET_NAME', 'Camp Registrations 2025')
 YOUTH_CAMP_SHEET_NAME = os.environ.get('YOUTH_CAMP_SHEET_NAME', 'Youths Camp Registrations 2025')
 
-ADMIN_NUMBERS = ['+263718704505'] 
+ADMIN_NUMBERS = ['+263718704505']
 
 ANCHOR_DATE = date(2024, 8, 21)
 PRIMARY_PALS_ANCHOR_DATE = date(2024, 9, 1)
@@ -66,6 +66,8 @@ CLASSES = { "beginners": "Beginners", "primary_pals": "Primary Pals", "answer": 
 HYMNBOOKS = { "shona": {"name": "Yellow Hymnbook Shona", "file": "shona_hymns.json"}, "english": {"name": "English Hymns", "file": "english_hymns.json"} }
 BIBLES = { "shona": {"name": "Shona Bible", "file": "shona_bible.db"}, "english": {"name": "English Bible (KJV)", "file": "english_bible.db"} }
 DEPARTMENTS = { "security": "Security", "media": "Media", "accommodation": "Accommodation", "transport": "Transport", "translation": "Translation", "kitchen": "Kitchen Work", "editorial": "Notes Taking (Editorial)"}
+# Added worker statuses for registration
+WORKER_STATUSES = {"minister": "Minister", "deacon": "Deacon", "teacher": "Sunday School Teacher", "none": "None of the above"}
 
 # --- 3. HELPER & DATABASE FUNCTIONS ---
 def get_firestore_collection_name(camp_type):
@@ -88,23 +90,33 @@ def export_registrations_to_sheet(camp_type):
 
     collection_name = get_firestore_collection_name(camp_type)
     sheet_name = YOUTH_CAMP_SHEET_NAME if camp_type == 'youths' else ANNUAL_CAMP_SHEET_NAME
-    
+
     try:
         docs = db.collection(collection_name).stream()
         all_rows = []
-        headers = ["Timestamp", "FirstName", "LastName", "DateOfBirth", "Age", "Gender", "ID/Passport", "Phone", "SalvationStatus", "Dependents", "Volunteering", "VolunteerDepartment", "NextOfKinName", "NextOfKinPhone", "CampStay"]
+        # Updated headers to include new fields
+        headers = [
+            "Timestamp", "FirstName", "LastName", "DateOfBirth", "Age", "Gender",
+            "ID/Passport", "Phone", "SalvationStatus", "Dependents", "WorkerStatus",
+            "Volunteering", "VolunteerDepartment", "TransportAssistance", "NextOfKinName",
+            "NextOfKinPhone", "CampStay"
+        ]
         all_rows.append(headers)
 
         for doc in docs:
             data = doc.to_dict()
             timestamp_obj = data.get("timestamp")
             timestamp_str = timestamp_obj.strftime("%Y-%m-%d %H:%M:%S") if isinstance(timestamp_obj, datetime) else ""
-            
+
+            # Updated row to match new headers
             row = [
-                timestamp_str, data.get("first_name", ""), data.get("last_name", ""), data.get("dob", ""),
-                data.get("age", ""), data.get("gender", ""), data.get("id_passport", ""), data.get("phone", ""),
-                data.get("salvation_status", ""), data.get("dependents", ""), data.get("volunteer_status", ""),
-                data.get("volunteer_department", ""), data.get("nok_name", ""), data.get("nok_phone", ""),
+                timestamp_str, data.get("first_name", ""), data.get("last_name", ""),
+                data.get("dob", ""), data.get("age", ""), data.get("gender", ""),
+                data.get("id_passport", ""), data.get("phone", ""),
+                data.get("salvation_status", ""), data.get("dependents", ""),
+                data.get("worker_status", "N/A"), data.get("volunteer_status", ""),
+                data.get("volunteer_department", ""), data.get("transport_assistance", "No"),
+                data.get("nok_name", ""), data.get("nok_phone", ""),
                 f"{data.get('camp_start', '')} to {data.get('camp_end', '')}"
             ]
             all_rows.append(row)
@@ -116,7 +128,7 @@ def export_registrations_to_sheet(camp_type):
         creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        
+
         try:
             sheet = client.open(sheet_name).sheet1
         except gspread.exceptions.SpreadsheetNotFound:
@@ -124,7 +136,7 @@ def export_registrations_to_sheet(camp_type):
 
         sheet.clear()
         sheet.append_rows(all_rows, value_input_option='USER_ENTERED')
-        
+
         return f"✅ Success! Exported {len(all_rows) - 1} registrations to '{sheet_name}'."
     except Exception as e:
         print(f"Error during export: {e}")
@@ -206,7 +218,7 @@ def format_hymn(hymn):
 def format_lesson(lesson, lesson_class):
     if not lesson: return "Lesson details could not be found."
     message_parts = []
-    
+
     if lesson_class == "Search":
         title = lesson.get('lessonTitle', 'No Title')
         message_parts.append(f"📖 *{title}*")
@@ -214,16 +226,16 @@ def format_lesson(lesson, lesson_class):
         if refs:
             ref_texts = [f"{r.get('book')} {r.get('chapter')}:{r.get('verses')}" for r in refs]
             message_parts.append(f"✝️ *Bible Reference:* {linkify_bible_verses(', '.join(ref_texts))}")
-        
+
         if lesson.get('supplementalScripture'):
             message_parts.append(f"*Supplemental Scripture:* {linkify_bible_verses(lesson['supplementalScripture'])}")
-        
+
         if lesson.get('keyVerse'):
             message_parts.append(f"📌 *Key Verse:*\n_{linkify_bible_verses(lesson['keyVerse'])}_")
-            
+
         if lesson.get('resourceMaterial'):
             message_parts.append(f"📚 *Resource Material:*\n{linkify_bible_verses(lesson['resourceMaterial'])}")
-            
+
         message_parts.append("---")
         for section in lesson.get('lessonSections', []):
             sec_title = section.get('sectionTitle', '')
@@ -242,7 +254,7 @@ def format_lesson(lesson, lesson_class):
         message_parts.append("---")
         story = lesson.get('story', [])
         if story: message_parts.append("📖 *Story*\n" + "\n\n".join([linkify_bible_verses(s) for s in story]))
-        
+
         activities = lesson.get('activities', [])
         if activities:
             activity_texts = ["🧩 *Activities*"]
@@ -251,19 +263,19 @@ def format_lesson(lesson, lesson_class):
                 act_instr = "\n".join(act.get('instructions', [])) if isinstance(act.get('instructions'), list) else act.get('instructions', '')
                 activity_texts.append(f"*{act.get('type')}: {act_title}*\n{linkify_bible_verses(act_instr)}")
             message_parts.append("\n".join(activity_texts))
-        
+
         if parent_guide:
             guide_texts = ["👨‍👩‍👧 *Parent's Guide*"]
             corner = linkify_bible_verses(parent_guide.get('parents_corner', {}).get('text', ''))
             if corner: guide_texts.append(f"*Parent's Corner:*\n{corner}")
-            
+
             devotions = parent_guide.get('family_devotions', {}).get('verses', [])
             if devotions:
                 devotion_lines = ["*Family Devotions:*"]
                 for dev in devotions: devotion_lines.append(f"  - *{dev.get('day')}:* {linkify_bible_verses(dev.get('reference'))}")
                 guide_texts.append("\n".join(devotion_lines))
             message_parts.append("\n".join(guide_texts))
-            
+
     else: # For Beginners and Answer classes
         title = lesson.get('title', 'No Title')
         memory_verse = linkify_bible_verses(lesson.get('memory_verse', 'N/A'))
@@ -321,16 +333,16 @@ def send_whatsapp_message(recipient_id, message_payload):
     if not all([WHATSAPP_TOKEN, PHONE_NUMBER_ID]):
         print("ERROR: WhatsApp credentials not set.")
         return
-    
+
     url = f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/messages"
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-    
+
     data = {
         "messaging_product": "whatsapp",
         "to": recipient_id,
         **message_payload
     }
-    
+
     try:
         response = requests.post(url, headers=headers, json=data)
         response.raise_for_status()
@@ -359,9 +371,9 @@ def handle_bot_logic(user_id, message_text):
     session_ref = db.collection('sessions').document(user_id)
     session_doc = session_ref.get()
     user_profile = session_doc.to_dict() if session_doc.exists else {}
-    
+
     message_text_lower = message_text.lower().strip()
-    
+
     if message_text_lower.startswith('bible '):
         passage = message_text.strip().replace('bible ', '', 1)
         default_bible_file = BIBLES.get('english', {}).get('file')
@@ -372,7 +384,7 @@ def handle_bot_logic(user_id, message_text):
             send_text_message(user_id, verse_text)
         else:
             send_text_message(user_id, "Sorry, the default Bible file is not configured correctly.")
-        
+
         return
 
     # --- Admin Check ---
@@ -398,8 +410,8 @@ def handle_bot_logic(user_id, message_text):
     # --- Mode Selection Logic ---
     if message_text_lower.startswith("mode_"):
         full_mode_id = message_text_lower.replace('mode_', '', 1)
-        
-        user_profile = {} 
+
+        user_profile = {}
 
         if full_mode_id.startswith('camp_reg_'):
             user_profile['mode'] = 'camp_registration'
@@ -448,7 +460,7 @@ def handle_bot_logic(user_id, message_text):
             }
             send_interactive_message(user_id, interactive)
             user_profile['lesson_step'] = 'awaiting_class_choice'
-        
+
         elif step == 'awaiting_class_choice' and message_text_lower.startswith('lesson_class_'):
             class_key = message_text_lower.replace('lesson_class_', '', 1)
             user_class = CLASSES.get(class_key)
@@ -458,7 +470,7 @@ def handle_bot_logic(user_id, message_text):
                 return
 
             user_profile['lesson_class'] = user_class
-            
+
             lesson_files = { "Beginners": "beginners_lessons.json", "Primary Pals": "primary_pals_lessons.json", "Answer": "answer_lessons.json", "Search": "search_lessons.json" }
             lesson_file_path = os.path.join(os.path.dirname(__file__), LESSONS_DIR, lesson_files.get(user_class, ''))
             raw_data = load_json_file(lesson_file_path)
@@ -501,7 +513,7 @@ def handle_bot_logic(user_id, message_text):
                 send_text_message(user_id, "You can ask another question, or go back to the main menu by tapping the button below.")
                 interactive = { "type": "button", "body": {"text": "Finished asking questions?"}, "action": {"buttons": [{"type": "reply", "reply": {"id": "reset", "title": "⬅️ Main Menu"}}]} }
                 send_interactive_message(user_id, interactive)
-    
+
     elif mode == 'hymnbook':
         step = user_profile.get('hymn_step', 'start')
         if step == 'start':
@@ -520,11 +532,11 @@ def handle_bot_logic(user_id, message_text):
                 send_text_message(user_id, "Invalid hymnbook selection. Please try again.")
                 session_ref.delete()
                 return
-            
+
             user_profile['hymnbook_file'] = chosen_book['file']
             send_text_message(user_id, f"You've selected *{chosen_book['name']}*. Please enter a hymn number.")
             user_profile['hymn_step'] = 'awaiting_hymn_number'
-        
+
         elif step == 'awaiting_hymn_number':
             if not message_text.strip().isdigit():
                 send_text_message(user_id, "Please enter a valid number.")
@@ -547,7 +559,7 @@ def handle_bot_logic(user_id, message_text):
             }
             send_interactive_message(user_id, interactive)
             user_profile['bible_step'] = 'awaiting_bible_choice'
-        
+
         elif step == 'awaiting_bible_choice' and message_text_lower.startswith('bible_'):
             bible_key = message_text_lower.replace('bible_', '', 1)
             chosen_bible = BIBLES.get(bible_key)
@@ -571,12 +583,12 @@ def handle_bot_logic(user_id, message_text):
         step = user_profile.get('registration_step', 'start')
         data = user_profile.setdefault('registration_data', {})
         reg_type = user_profile.get('registration_type', 'annual')
-        
+
         if step == 'start':
             camp_name = "2025 Regional Youths Camp" if reg_type == 'youths' else "2025 Annual Camp"
             send_text_message(user_id, f"🏕️ *{camp_name} Registration*\n\nLet's get you registered. First, what is your *ID or Passport number*?")
             user_profile['registration_step'] = 'awaiting_id_passport'
-        
+
         elif step == 'awaiting_id_passport':
             id_passport = message_text.strip()
             if not id_passport:
@@ -585,7 +597,7 @@ def handle_bot_logic(user_id, message_text):
 
             send_text_message(user_id, f"Checking if `{id_passport}` is already registered...")
             existing_reg = check_registration_status_firestore(id_passport, reg_type)
-            
+
             if isinstance(existing_reg, dict):
                 reg_name = f"{existing_reg.get('first_name', '')} {existing_reg.get('last_name', '')}"
                 send_text_message(user_id, f"It looks like you are already registered under the name *{reg_name}* with this ID. No need to register again!\n\nReturning to the main menu.")
@@ -595,7 +607,7 @@ def handle_bot_logic(user_id, message_text):
                 send_text_message(user_id, "I'm having trouble checking for duplicates right now. Please contact an admin.")
                 session_ref.delete()
                 return
-            else: 
+            else:
                 data['id_passport'] = id_passport
                 send_text_message(user_id, "Great, you are not already registered. Now, what is your *first name*?")
                 user_profile['registration_step'] = 'awaiting_first_name'
@@ -609,7 +621,7 @@ def handle_bot_logic(user_id, message_text):
             data['last_name'] = message_text.strip()
             send_text_message(user_id, "Got it. What is your *date of birth*? (DD/MM/YYYY)")
             user_profile['registration_step'] = 'awaiting_dob'
-        
+
         elif step == 'awaiting_dob':
             age = calculate_age(message_text.strip())
             if not age: send_text_message(user_id, "That doesn't look right. Please use DD/MM/YYYY format.")
@@ -640,8 +652,20 @@ def handle_bot_logic(user_id, message_text):
             if not message_text.strip().isdigit(): send_text_message(user_id, "Please enter a number (e.g., 0, 1, 2).")
             else:
                 data['dependents'] = message_text.strip()
-                send_text_message(user_id, "Who is your *next of kin*? (Full name).")
-                user_profile['registration_step'] = 'awaiting_nok_name'
+                # New step: ask for worker status
+                interactive = {
+                    "type": "list", "header": {"type": "text", "text": "Select Your Role"},
+                    "body": {"text": "Thank you. Please select your role in the church, if any."},
+                    "action": { "button": "View Roles", "sections": [{"title": "Roles", "rows": [{"id": f"worker_{key}", "title": name} for key, name in WORKER_STATUSES.items()]}]}
+                }
+                send_interactive_message(user_id, interactive)
+                user_profile['registration_step'] = 'awaiting_worker_status'
+        # New step handler for worker status
+        elif step == 'awaiting_worker_status' and message_text_lower.startswith('worker_'):
+            worker_key = message_text_lower.replace('worker_', '', 1)
+            data['worker_status'] = WORKER_STATUSES.get(worker_key, "N/A")
+            send_text_message(user_id, "Who is your *next of kin*? (Full name).")
+            user_profile['registration_step'] = 'awaiting_nok_name'
         elif step == 'awaiting_nok_name':
             data['nok_name'] = message_text.strip()
             send_text_message(user_id, "What is your *next of kin's phone number*?")
@@ -659,26 +683,39 @@ def handle_bot_logic(user_id, message_text):
             user_profile['registration_step'] = 'awaiting_camp_end_date'
         elif step == 'awaiting_camp_end_date':
             data['camp_end'] = message_text.strip()
-            interactive = {"type": "button", "body": {"text": "Are you willing to assist voluntarily?"}, "action": {"buttons": [{"type": "reply", "reply": {"id": "yes", "title": "Yes, I'll help"}}, {"type": "reply", "reply": {"id": "no", "title": "No, thanks"}}]}}
+            interactive = {"type": "button", "body": {"text": "Are you willing to assist voluntarily?"}, "action": {"buttons": [{"type": "reply", "reply": {"id": "volunteer_yes", "title": "Yes, I'll help"}}, {"type": "reply", "reply": {"id": "volunteer_no", "title": "No, thanks"}}]}}
             send_interactive_message(user_id, interactive)
             user_profile['registration_step'] = 'awaiting_volunteer_status'
         elif step == 'awaiting_volunteer_status':
-            if message_text_lower not in ['yes', 'no']: send_text_message(user_id, "Please tap one of the buttons.")
+            if not message_text_lower.startswith('volunteer_'): send_text_message(user_id, "Please tap one of the buttons.")
             else:
-                data['volunteer_status'] = "Yes" if message_text_lower == 'yes' else "No"
-                if message_text_lower == 'yes':
+                is_volunteering = message_text_lower == 'volunteer_yes'
+                data['volunteer_status'] = "Yes" if is_volunteering else "No"
+                if is_volunteering:
                     interactive = { "type": "list", "header": {"type": "text", "text": "Select Department"}, "body": {"text": "That's wonderful! Please choose a department where you'd like to help."}, "action": { "button": "View Departments", "sections": [{"title": "Departments", "rows": [{"id": f"dept_{key}", "title": name} for key, name in DEPARTMENTS.items()]}]} }
                     send_interactive_message(user_id, interactive)
                     user_profile['registration_step'] = 'awaiting_volunteer_department'
                 else:
                     data['volunteer_department'] = 'N/A'
-                    _send_confirmation_message(user_id, data, "Camp")
-                    user_profile['registration_step'] = 'awaiting_confirmation'
+                    # Go to transport question
+                    interactive = {"type": "button", "body": {"text": "Do you require transport assistance upon arrival?"}, "action": {"buttons": [{"type": "reply", "reply": {"id": "transport_yes", "title": "Yes"}}, {"type": "reply", "reply": {"id": "transport_no", "title": "No"}}]}}
+                    send_interactive_message(user_id, interactive)
+                    user_profile['registration_step'] = 'awaiting_transport_assistance'
         elif step == 'awaiting_volunteer_department' and message_text_lower.startswith('dept_'):
             dept_key = message_text_lower.replace('dept_', '', 1)
             data['volunteer_department'] = DEPARTMENTS[dept_key]
-            _send_confirmation_message(user_id, data, "Camp")
-            user_profile['registration_step'] = 'awaiting_confirmation'
+            # Go to transport question
+            interactive = {"type": "button", "body": {"text": "Do you require transport assistance upon arrival?"}, "action": {"buttons": [{"type": "reply", "reply": {"id": "transport_yes", "title": "Yes"}}, {"type": "reply", "reply": {"id": "transport_no", "title": "No"}}]}}
+            send_interactive_message(user_id, interactive)
+            user_profile['registration_step'] = 'awaiting_transport_assistance'
+        # New step handler for transport assistance
+        elif step == 'awaiting_transport_assistance':
+            if not message_text_lower.startswith('transport_'):
+                send_text_message(user_id, "Please tap *Yes* or *No*.")
+            else:
+                data['transport_assistance'] = "Yes" if message_text_lower == 'transport_yes' else "No"
+                _send_confirmation_message(user_id, data, "Camp")
+                user_profile['registration_step'] = 'awaiting_confirmation'
 
         elif step == 'awaiting_confirmation':
             if message_text_lower == 'confirm_reg':
@@ -690,10 +727,10 @@ def handle_bot_logic(user_id, message_text):
                 session_ref.delete()
                 return
             elif message_text_lower == 'restart_reg':
-                user_profile['registration_step'] = 'start'
-                user_profile['registration_data'] = {}
-                handle_bot_logic(user_id, "restart_internal")
+                user_profile.update({'registration_step': 'start', 'registration_data': {}})
+                handle_bot_logic(user_id, "restart_internal") # Use an internal signal to avoid loops
                 return
+
 
     elif mode == 'check_status':
         step = user_profile.get('check_step', 'start')
@@ -701,19 +738,19 @@ def handle_bot_logic(user_id, message_text):
             interactive = {"type": "button", "body": {"text": "Which camp registration would you like to check?"}, "action": {"buttons": [{"type": "reply", "reply": {"id": "check_youths", "title": "Youths Camp"}}, {"type": "reply", "reply": {"id": "check_annual", "title": "Annual Camp"}}]}}
             send_interactive_message(user_id, interactive)
             user_profile['check_step'] = 'awaiting_camp_choice'
-        
+
         elif step == 'awaiting_camp_choice' and message_text_lower.startswith('check_'):
             camp_type = message_text_lower.replace('check_', '', 1)
             user_profile['camp_to_check'] = camp_type
             send_text_message(user_id, "Got it. Please enter the *ID/Passport Number* you used to register.")
             user_profile['check_step'] = 'awaiting_identifier'
-        
+
         elif step == 'awaiting_identifier':
             identifier = message_text.strip()
             camp_type = user_profile.get('camp_to_check')
             send_text_message(user_id, f"Checking for '{identifier}'...")
             status = check_registration_status_firestore(identifier, camp_type)
-            
+
             if status == "Error":
                  send_text_message(user_id, "Sorry, a technical error occurred. Please try again later.")
             elif isinstance(status, dict):
@@ -727,13 +764,14 @@ def handle_bot_logic(user_id, message_text):
                 send_text_message(user_id, confirm_msg)
             else:
                 send_text_message(user_id, f"❌ *No Registration Found*\n\nI could not find a registration matching '{identifier}'.")
-            
+
             session_ref.delete()
             return
-    
+
     session_ref.set(user_profile)
 
 def _send_confirmation_message(user_id, data, camp_name):
+    # Updated confirmation message to include new fields
     conf_text = (
         f"📝 *Please confirm your details for the {camp_name}:*\n\n"
         f"*Name:* {data.get('first_name', '')} {data.get('last_name', '')}\n"
@@ -743,8 +781,10 @@ def _send_confirmation_message(user_id, data, camp_name):
         f"*Phone:* {data.get('phone', '')}\n\n"
         f"*Salvation Status:* {data.get('salvation_status', '')}\n"
         f"*Dependents Attending:* {data.get('dependents', '0')}\n"
+        f"*Worker Status:* {data.get('worker_status', 'N/A')}\n\n"
         f"*Volunteering:* {data.get('volunteer_status', '')}"
-        f"{' (' + data.get('volunteer_department', '') + ')' if data.get('volunteer_status') == 'Yes' else ''}\n\n"
+        f"{' (' + data.get('volunteer_department', '') + ')' if data.get('volunteer_status') == 'Yes' else ''}\n"
+        f"*Transport Assistance:* {data.get('transport_assistance', 'No')}\n\n"
         f"*Next of Kin:* {data.get('nok_name', '')}\n"
         f"*NOK Phone:* {data.get('nok_phone', '')}\n\n"
         f"*Camp Stay:* {data.get('camp_start', '')} to {data.get('camp_end', '')}\n\n"
@@ -759,7 +799,7 @@ def whatsapp_webhook():
         if request.args.get('hub.verify_token') == VERIFY_TOKEN:
             return request.args.get('hub.challenge'), 200
         return 'Verification token mismatch', 403
-    
+
     if request.method == 'POST':
         data = request.get_json()
         try:
@@ -770,7 +810,7 @@ def whatsapp_webhook():
                             for message in change['value']['messages']:
                                 user_id = message['from']
                                 msg_text = ''
-                                
+
                                 if message.get('type') == 'text':
                                     msg_text = message['text']['body']
                                 elif message.get('type') == 'interactive':
@@ -779,7 +819,7 @@ def whatsapp_webhook():
                                         msg_text = message['interactive']['button_reply']['id']
                                     elif interactive_type == 'list_reply':
                                         msg_text = message['interactive']['list_reply']['id']
-                                
+
                                 if msg_text:
                                     handle_bot_logic(user_id, msg_text)
         except Exception as e:
