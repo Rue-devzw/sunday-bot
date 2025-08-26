@@ -12,5 +12,10 @@
       "src": "/(.*)",
       "dest": "app.py"
     }
-  ]
+  ],
+  "functions": {
+    "app.py": {
+      "includeFiles": "bibles/**, hymnbooks/**, lessons/**, services.py, utils.py, config.py, handlers/**"
+    }
+  }
 }
