@@ -4,7 +4,19 @@
     {
       "src": "app.py",
       "use": "@vercel/python",
-      "config": { "maxLambdaSize": "15mb", "runtime": "python3.9" }
+      "config": {
+        "maxLambdaSize": "15mb",
+        "runtime": "python3.9",
+        "includeFiles": [
+          "bibles/**",
+          "hymnbooks/**",
+          "lessons/**",
+          "services.py",
+          "utils.py",
+          "config.py",
+          "handlers/**"
+        ]
+      }
     }
   ],
   "routes": [
@@ -12,10 +24,5 @@
       "src": "/(.*)",
       "dest": "app.py"
     }
-  ],
-  "functions": {
-    "app.py": {
-      "includeFiles": "bibles/**, hymnbooks/**, lessons/**, services.py, utils.py, config.py, handlers/**"
-    }
-  }
+  ]
 }
