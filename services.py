@@ -46,20 +46,49 @@ def initialize_services():
 
 # --- WHATSAPP MESSAGING SERVICES ---
 def send_whatsapp_message(recipient_id, message_payload):
-    """Sends a message payload to the WhatsApp API."""
+    """Sends a message payload to the WhatsApp API with detailed logging."""
     if not all([config.WHATSAPP_TOKEN, config.PHONE_NUMBER_ID]):
-        print("ERROR: WhatsApp credentials not set.")
+        print("ERROR: WhatsApp credentials not set in environment variables.")
         return
-    url = f"https://graph.facebook.com/v23.0/{config.PHONE_NUMBER_ID}/messages"
-    headers = {"Authorization": f"Bearer {config.WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-    data = {"messaging_product": "whatsapp", "to": recipient_id, **message_payload}
+
+    # The WhatsApp Cloud API requires the phone number without the '+' symbol.
+    # This is a common cause of 400 errors.
+    clean_recipient_id = recipient_id.replace('+', '')
+
+    url = f"https://graph.facebook.com/v19.0/{config.PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {config.WHATSAPP_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "messaging_product": "whatsapp",
+        "to": clean_recipient_id,
+        **message_payload
+    }
+
+    # --- THIS IS THE CRITICAL LOGGING PART ---
+    print("--- Attempting to send message to WhatsApp API ---")
+    print(f"Recipient: {clean_recipient_id}")
+    # Use json.dumps for clean, readable printing of the JSON payload
+    print(f"Request Payload: {json.dumps(data, indent=2)}")
+    # --- END OF CRITICAL LOGGING ---
+
     try:
         response = requests.post(url, headers=headers, json=data)
+        # This will raise an exception for 4xx and 5xx status codes
         response.raise_for_status()
-        print(f"Message sent to {recipient_id}: {response.status_code}")
+        print(f"Message successfully sent to {recipient_id}. Status: {response.status_code}")
+
     except requests.exceptions.RequestException as e:
-        print(f"Error sending message: {e}")
-        if e.response: print(f"Response Body: {e.response.text}")
+        print("--- FAILED TO SEND MESSAGE ---")
+        print(f"Error Type: {type(e)}")
+        print(f"Error Details: {e}")
+        # If the response object exists, print its details
+        if e.response is not None:
+            print(f"Response Status Code: {e.response.status_code}")
+            # The response body contains the SPECIFIC reason for the 400 error
+            print(f"Response Body: {e.response.text}")
+        print("------------------------------")
 
 def send_text_message(recipient_id, text):
     payload = {"type": "text", "text": {"body": text}}
