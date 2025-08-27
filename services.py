@@ -50,7 +50,7 @@ def send_whatsapp_message(recipient_id, message_payload):
     if not all([config.WHATSAPP_TOKEN, config.PHONE_NUMBER_ID]):
         print("ERROR: WhatsApp credentials not set.")
         return
-    url = f"https://graph.facebook.com/v19.0/{config.PHONE_NUMBER_ID}/messages"
+    url = f"https://graph.facebook.com/v23.0/{config.PHONE_NUMBER_ID}/messages"
     headers = {"Authorization": f"Bearer {config.WHATSAPP_TOKEN}", "Content-Type": "application/json"}
     data = {"messaging_product": "whatsapp", "to": recipient_id, **message_payload}
     try:
