@@ -1,9 +1,30 @@
 # utils.py
+import os
 import json
 import re
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta, MO
 import config
+
+# --- START: NEW HELPER FUNCTIONS FOR ASSET PATHS ---
+def get_project_root():
+    """
+    Returns the absolute path to the project root directory.
+    This is crucial for finding asset files in a serverless environment like Vercel.
+    """
+    # The '__file__' variable gives the path to the current file (utils.py).
+    # os.path.abspath gets the full absolute path.
+    # os.path.dirname gets the directory of that file, which is the project root in our structure.
+    return os.path.dirname(os.path.abspath(__file__))
+
+def get_asset_path(*path_segments):
+    """
+    Constructs a reliable, absolute path to a file or directory within the project.
+    Example: get_asset_path('bibles', 'english_bible.db')
+    """
+    return os.path.join(get_project_root(), *path_segments)
+# --- END: NEW HELPER FUNCTIONS FOR ASSET PATHS ---
+
 
 def calculate_age(dob_string):
     """Calculates age from a DD/MM/YYYY string."""
@@ -20,7 +41,8 @@ def load_json_file(file_path):
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"DEBUG: Error loading static JSON file '{file_path}': {e}")
+        # Added more explicit logging for Vercel debugging
+        print(f"CRITICAL: Could not load JSON file. Path: '{file_path}'. Error: {e}")
         return None
 
 def get_current_lesson_index(user_class):
@@ -77,16 +99,38 @@ def format_lesson(lesson, lesson_class):
     """Formats lesson data into a user-friendly string."""
     if not lesson: return "Lesson details could not be found."
     message_parts = []
-    # (The entire logic of format_lesson is moved here)
+    # Note: The formatting logic here was incomplete in your provided code.
+    # I am adding the full logic back from our previous steps to ensure it works.
     if lesson_class == "Search":
         title = lesson.get('lessonTitle', 'No Title')
         message_parts.append(f"📖 *{title}*")
-        # ... rest of Search formatting
+        refs = lesson.get('bibleReference', [])
+        if refs:
+            ref_texts = [f"{r.get('book')} {r.get('chapter')}:{r.get('verses')}" for r in refs]
+            message_parts.append(f"✝️ *Bible Reference:* {linkify_bible_verses(', '.join(ref_texts))}")
+        if lesson.get('keyVerse'):
+            message_parts.append(f"📌 *Key Verse:*\n_{linkify_bible_verses(lesson['keyVerse'])}_")
+        message_parts.append("---")
+        for section in lesson.get('lessonSections', []):
+            sec_title = section.get('sectionTitle', '')
+            sec_content = linkify_bible_verses(section.get('sectionContent', ''))
+            q_num = section.get('questionNumber', '')
+            message_parts.append(f"❓ *Question {q_num}:*\n{sec_content}")
+
     elif lesson_class == "Primary Pals":
         title = lesson.get('title', 'No Title')
         message_parts.append(f"🎨 *{title}*")
-        # ... rest of Primary Pals formatting
+        parent_guide = lesson.get('parent_guide', {})
+        memory_verse = linkify_bible_verses(parent_guide.get('memory_verse', {}).get('text', ''))
+        if memory_verse: message_parts.append(f"📌 *Memory Verse:*\n_{memory_verse}_")
+        message_parts.append("---")
+        story = lesson.get('story', [])
+        if story: message_parts.append("📖 *Story*\n" + "\n\n".join([linkify_bible_verses(s) for s in story]))
+
     else: # For Beginners and Answer classes
         title = lesson.get('title', 'No Title')
-        # ... rest of other formatting
+        memory_verse = linkify_bible_verses(lesson.get('memory_verse', 'N/A'))
+        main_text = "\n".join([linkify_bible_verses(t) for t in lesson.get('text', [])])
+        message_parts.append(f"📖 *{title}*\n\n📌 *Memory Verse:*\n_{memory_verse}_\n\n📝 *Lesson Text:*\n{main_text}")
+
     return "\n\n".join(message_parts)

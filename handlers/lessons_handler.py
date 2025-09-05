@@ -1,8 +1,7 @@
 # handlers/lessons_handler.py
 
-import os
 import services
-import utils
+import utils  # Ensure utils is imported for the path helper
 import config
 
 def handle_lessons(user_id, user_profile, message_text):
@@ -32,11 +31,16 @@ def handle_lessons(user_id, user_profile, message_text):
         user_profile['lesson_class'] = user_class
         
         lesson_file_name = config.LESSON_FILES.get(user_class, '')
-        lesson_file_path = os.path.join(os.path.dirname(__file__), '..', config.LESSONS_DIR, lesson_file_name)
+        
+        # --- BEFORE (Incorrect for Vercel) ---
+        # lesson_file_path = os.path.join(os.path.dirname(__file__), '..', config.LESSONS_DIR, lesson_file_name)
+        
+        # --- AFTER (Corrected using the asset path helper) ---
+        lesson_file_path = utils.get_asset_path(config.LESSONS_DIR, lesson_file_name)
         
         raw_data = utils.load_json_file(lesson_file_path)
         if raw_data is None:
-            services.send_text_message(user_id, "Sorry, the lesson file for your class could not be loaded.")
+            services.send_text_message(user_id, "Sorry, the lesson file for your class could not be loaded from the server.")
             services.delete_user_profile(user_id)
             return None
 
