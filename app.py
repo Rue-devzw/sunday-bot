@@ -79,7 +79,7 @@ def handle_bot_logic(user_id, message_text):
             "body": {"text": "I can help you with lessons, hymns, camp registration, and more. Please choose an option:"},
             "action": { "button": "Choose an option", "sections": [ { "title": "Main Menu", "rows": [
                 {"id": "mode_lessons", "title": "📖 Weekly Lessons"}, {"id": "mode_hymnbook", "title": "🎶 Hymnbook"},
-                {"id": "mode_bible", "title": "✝️ Bible Lookup"}, {"id": "mode_camp_reg_youths", "title": "🏕️ Youths Camp Reg."},
+                {"id": "mode_bible", "title": "✝️ Bible Lookup"}, #{"id": "mode_camp_reg_youths", "title": "🏕️ Youths Camp Reg."},#
                 {"id": "mode_camp_reg_annual", "title": "🏕️ Annual Camp Reg."}, {"id": "mode_check_status", "title": "✅ Check Registration"}
             ]}]}
         }
