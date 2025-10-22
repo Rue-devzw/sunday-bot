@@ -22,7 +22,7 @@ ADMIN_NUMBERS = ['+263718704505', '+263789990580', '+263774960029', '+2637170599
 CLEAN_ADMIN_NUMBERS = [re.sub(r'\D', '', num) for num in ADMIN_NUMBERS] # Pre-processed for efficiency
 
 # --- LESSONS CONFIG ---
-ANCHOR_DATE = date(2024, 8, 21)
+ANCHOR_DATE = date(2024, 9, 1)
 PRIMARY_PALS_ANCHOR_DATE = date(2024, 9, 1)
 CLASSES = { "beginners": "Beginners", "primary_pals": "Primary Pals", "answer": "Answer", "search": "Search" }
 LESSON_FILES = {
@@ -43,12 +43,34 @@ BIBLES = {
 }
 
 # --- REGISTRATION CONFIG ---
-DEPARTMENTS = {
-    "security": "Security", "media": "Media", "accommodation": "Accommodation",
-    "transport": "Transport", "translation": "Translation", "kitchen": "Kitchen Work",
-    "editorial": "Notes Taking (Editorial)"
+MARITAL_STATUSES = {
+    "single": "Single", "married": "Married", "divorced": "Divorced", "widowed": "Widowed"
 }
-WORKER_STATUSES = {
+ACCOMMODATION_OPTIONS = {
+    "hotel": "Hotel", "hostel": "Hostel", "guesthouse": "Guesthouse", "apartment": "Apartment", "other": "Other"
+}
+DIETARY_REQUIREMENTS = {
+    "none": "None", "vegetarian": "Vegetarian", "vegan": "Vegan", "gluten_free": "Gluten-Free"
+}
+LANGUAGES = {
+    "english": "English", "shona": "Shona", "ndebele": "Ndebele"
+}
+VOLUNTEER_ROLES = {
+    "cleaning_and_hygiene": "Cleaning and Hygiene",
+    "waste_management": "Waste Management",
+    "kitchen": "Kitchen",
+    "deacon_duties": "Deacon duties",
+    "transportation": "Transportation",
+    "script_sermon_secretariat": "Script Sermon (Secretariat)",
+    "accommodation_hosting": "Accommodation/Hosting",
+    "reception": "Reception",
+    "officer_security": "Officer/Security",
+    "digital_presence": "Digital Presence",
+    "multimedia": "Multimedia",
+    "maintenance": "Maintenance",
+    "other": "Other"
+}
+CHURCH_ROLES = {
     "minister": "Minister", "deacon": "Deacon", "teacher": "Sunday School Teacher",
     "none": "None of the above"
 }

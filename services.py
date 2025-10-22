@@ -88,6 +88,16 @@ def send_interactive_message(recipient_id, interactive_payload):
     payload = {"type": "interactive", "interactive": interactive_payload}
     send_whatsapp_message(recipient_id, payload)
 
+def send_buttons_message(recipient_id, text, buttons):
+    """Sends a text message with interactive buttons."""
+    interactive_payload = {
+        "type": "button",
+        "body": {"text": text},
+        "action": {"buttons": buttons}
+    }
+    payload = {"type": "interactive", "interactive": interactive_payload}
+    send_whatsapp_message(recipient_id, payload)
+
 # --- FIRESTORE (DATABASE) SERVICES ---
 def get_user_profile(user_id):
     if not db: return {}
@@ -132,7 +142,7 @@ def save_registration(reg_data, camp_type):
     if not db: return False
     try:
         collection_name = get_firestore_collection_name(camp_type)
-        doc_ref = db.collection(collection_name).document(reg_data['id_passport'])
+        doc_ref = db.collection(collection_name).document(reg_data['reference'])
         reg_data['timestamp'] = firestore.SERVER_TIMESTAMP
         doc_ref.set(reg_data)
         return True
